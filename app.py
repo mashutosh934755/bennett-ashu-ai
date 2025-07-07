@@ -1,94 +1,83 @@
 import streamlit as st
 import requests
 import os
+import logging
+
+# Logging setup
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 # Secure Gemini API Key Handling (from Streamlit secrets or environment variable)
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"] if "GEMINI_API_KEY" in st.secrets else os.getenv("GEMINI_API_KEY")
 GEMINI_API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent"
 
-# Set page configuration
-st.set_page_config(
-    page_title="Ashu AI @ BU Library",
-    layout="centered",
-    initial_sidebar_state="collapsed"
-)
-
 # Custom CSS styling
 def inject_custom_css():
-    custom_css = """
-    <style>
-        :root {
-            --header-color: #2e86c1;
-        }
-        .main .block-container {
-            max-width: 900px;
-            padding: 2rem 1rem;
-        }
-        .profile-container {
-            text-align: center;
-            margin-bottom: 1rem;
-        }
-        .quick-actions-row {
-            display: flex;
-            justify-content: center;
-            gap: 10px;
-            margin: 1rem 0 2rem 0;
-            width: 100%;
-        }
-        .quick-action-btn {
-            background-color: #2e86c1;
-            color: white !important;
-            padding: 10px 15px;
-            border-radius: 20px;
-            border: none;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-            transition: all 0.3s;
-            font-size: 14px;
-            text-decoration: none;
-            text-align: center;
-            cursor: pointer;
-            white-space: nowrap;
-            flex: 1;
-            max-width: 200px;
-        }
-        .quick-action-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
-        }
-        .chat-container {
-            margin: 2rem 0;
-        }
-        .static-chat-input {
-            position: fixed;
-            bottom: 80px;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 100%;
-            max-width: 800px;
-            z-index: 100;
-        }
-        .stChatInput input {
-            border-radius: 25px !important;
-            padding: 12px 20px !important;
-        }
-        .stChatInput button {
-            border-radius: 50% !important;
-            background-color: var(--header-color) !important;
-        }
-        .footer {
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            text-align: center;
-            color: #666;
-            padding: 1rem;
-            background-color: white;
-            z-index: 99;
-        }
-    </style>
-    """
-    st.markdown(custom_css, unsafe_allow_html=True)
+    try:
+        with open("styles.css") as f:
+            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+    except Exception:
+        # Fallback CSS (अगर styles.css नहीं हो तो)
+        custom_css = """
+        <style>
+            :root { --header-color: #2e86c1; }
+            .main .block-container { max-width: 900px; padding: 2rem 1rem; }
+            .profile-container { text-align: center; margin-bottom: 1rem; }
+            .quick-actions-row { display: flex; justify-content: center; gap: 10px; margin: 1rem 0 2rem 0; width: 100%; }
+            .quick-action-btn { background-color: #2e86c1; color: white !important; padding: 10px 15px; border-radius: 20px; border: none; box-shadow: 0 2px 5px rgba(0,0,0,0.1); transition: all 0.3s; font-size: 14px; text-decoration: none; text-align: center; cursor: pointer; white-space: nowrap; flex: 1; max-width: 200px; }
+            .quick-action-btn:hover { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.15); }
+            .chat-container { margin: 2rem 0; }
+            .static-chat-input { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); width: 100%; max-width: 800px; z-index: 100; }
+            .stChatInput input { border-radius: 25px !important; padding: 12px 20px !important; }
+            .stChatInput button { border-radius: 50% !important; background-color: var(--header-color) !important; }
+            .footer { position: fixed; bottom: 0; left: 0; right: 0; text-align: center; color: #666; padding: 1rem; background-color: white; z-index: 99; }
+        </style>
+        """
+        st.markdown(custom_css, unsafe_allow_html=True)
+
+def create_quick_action_button(text, url):
+    return f'<a href="{url}" target="_blank" class="quick-action-btn">{text}</a>'
+
+def create_payload(prompt):
+    # Modular instructions for easy update and testing
+    instructions = (
+        "You are Ashu, an AI assistant for Bennett University Library. "
+        "Provide accurate and concise answers based on the following FAQ and library information. "
+        "Key information: "
+        "- Library website: https://library.bennett.edu.in/. "
+        "- Library timings: Weekdays 8:00 AM to 12:00 AM (midnight), Weekends & Holidays 9:00 AM to 5:00 PM (may vary during vacations, check https://library.bennett.edu.in/index.php/working-hours/). "
+        "- Physical book search: Use https://libraryopac.bennett.edu.in/ to search for physical books. For specific searches (e.g., by title or topic like 'Python'), guide users to enter terms in the catalog's title field. Automatic searches are not possible. "
+        "- e-Resources: Access digital books and journal articles at https://bennett.refread.com/#/home, available 24/7 remotely. "
+        "- Group Discussion Rooms: Book at http://10.6.0.121/gdroombooking/. "
+        "FAQ: "
+        "- Borrowing books: Use automated kiosks in the library (see library tutorial for details). "
+        "- Return books: Use the 24/7 Drop Box outside the library (see library tutorial). "
+        "- Overdue checks: Automated overdue emails are sent, or check via OPAC at https://libraryopac.bennett.edu.in/. "
+        "- Journal articles: Accessible 24/7 remotely at https://bennett.refread.com/#/home. "
+        "- Printing/Scanning: Available at the LRC from 9:00 AM to 5:30 PM. For laptop printing, email libraryhelpdesk@bennett.edu.in for official printouts or visit M-Block Library for other services. "
+        "- Alumni access: Alumni can access the LRC for reference. "
+        "- Book checkout limits: Refer to the library tutorial for details. "
+        "- Overdue fines: Pay via BU Payment Portal and update library staff. "
+        "- Book recommendations: Submit at https://docs.google.com/forms/d/e/1FAIpQLSeC0-LPlWvUbYBcN834Ct9kYdC9Oebutv5VWRcTujkzFgRjZw/viewform. "
+        "- Appeal fines: Contact libraryhelpdesk@bennett.edu.in or visit the HelpDesk. "
+        "- Download e-Books: Download chapters at https://bennett.refread.com/#/home. "
+        "- Inter Library Loan: Available via DELNET, contact library for details. "
+        "- Non-BU interns: Can use the library for reading only. "
+        "- Finding books on shelves: Search via OPAC; books have Call Numbers, and shelves are marked (see tutorial). "
+        "- Snacks in LRC: Not allowed, but water bottles are permitted. "
+        "- Drop Box issues: Confirm return via auto-generated email; if none, contact libraryhelpdesk@bennett.edu.in. "
+        "- Reserve a book: Use the 'Place Hold' feature in OPAC at https://libraryopac.bennett.edu.in/. "
+        "If the question is unrelated, politely redirect to library-related topics. "
+        f"User question: {prompt}"
+    )
+    return {
+        "contents": [
+            {
+                "parts": [
+                    {"text": instructions}
+                ]
+            }
+        ]
+    }
 
 # Initialize session state for chat history
 if "messages" not in st.session_state:
@@ -97,7 +86,7 @@ if "messages" not in st.session_state:
 def main():
     inject_custom_css()
 
-    # Header Section - Centered
+    # Header Section
     with st.container():
         st.markdown("""
         <div class="profile-container">
@@ -108,23 +97,19 @@ def main():
         </div>
         """, unsafe_allow_html=True)
 
-    # Quick Actions - Horizontal and Centered using columns
+    # Quick Actions
     quick_actions = [
         ("Find e-Resources", "https://bennett.refread.com/#/home"),
         ("Find Books", "https://libraryopac.bennett.edu.in/"),
         ("Working Hours", "https://library.bennett.edu.in/index.php/working-hours/"),
         ("Book GD Rooms", "http://10.6.0.121/gdroombooking/")
     ]
-
     cols = st.columns(4)
     for i, (text, url) in enumerate(quick_actions):
         with cols[i]:
-            st.markdown(
-                f'<a href="{url}" target="_blank" class="quick-action-btn">{text}</a>', 
-                unsafe_allow_html=True
-            )
+            st.markdown(create_quick_action_button(text, url), unsafe_allow_html=True)
 
-    # Welcome message below buttons
+    # Welcome Message
     with st.container():
         st.markdown("""
         <div style="text-align: center; margin: 2rem 0;">
@@ -132,7 +117,7 @@ def main():
         </div>
         """, unsafe_allow_html=True)
 
-    # Chat Container (for previous messages)
+    # Chat Messages
     with st.container():
         for message in st.session_state.messages:
             with st.chat_message(message["role"]):
@@ -144,67 +129,37 @@ def main():
         st.session_state.messages.append({"role": "user", "content": prompt})
 
         # Gemini API Call
-        try:
-            if not GEMINI_API_KEY:
-                answer = "Gemini API Key is missing. Please set it as a secret in Streamlit Cloud."
-            else:
-                payload = {
-                    "contents": [
-                        {
-                            "parts": [
-                                {
-                                    "text": (
-                                        "You are Ashu, an AI assistant for Bennett University Library. "
-                                        "Provide accurate and concise answers based on the following FAQ and library information. "
-                                        "Key information: "
-                                        "- Library website: https://library.bennett.edu.in/. "
-                                        "- Library timings: Weekdays 8:00 AM to 12:00 AM (midnight), Weekends & Holidays 9:00 AM to 5:00 PM (may vary during vacations, check https://library.bennett.edu.in/index.php/working-hours/). "
-                                        "- Physical book search: Use https://libraryopac.bennett.edu.in/ to search for physical books. For specific searches (e.g., by title or topic like 'Python'), guide users to enter terms in the catalog's title field. Automatic searches are not possible. "
-                                        "- e-Resources: Access digital books and journal articles at https://bennett.refread.com/#/home, available 24/7 remotely. "
-                                        "- Group Discussion Rooms: Book at http://10.6.0.121/gdroombooking/. "
-                                        "FAQ: "
-                                        "- Borrowing books: Use automated kiosks in the library (see library tutorial for details). "
-                                        "- Return books: Use the 24/7 Drop Box outside the library (see library tutorial). "
-                                        "- Overdue checks: Automated overdue emails are sent, or check via OPAC at https://libraryopac.bennett.edu.in/. "
-                                        "- Journal articles: Accessible 24/7 remotely at https://bennett.refread.com/#/home. "
-                                        "- Printing/Scanning: Available at the LRC from 9:00 AM to 5:30 PM. For laptop printing, email libraryhelpdesk@bennett.edu.in for official printouts or visit M-Block Library for other services. "
-                                        "- Alumni access: Alumni can access the LRC for reference. "
-                                        "- Book checkout limits: Refer to the library tutorial for details. "
-                                        "- Overdue fines: Pay via BU Payment Portal and update library staff. "
-                                        "- Book recommendations: Submit at https://docs.google.com/forms/d/e/1FAIpQLSeC0-LPlWvUbYBcN834Ct9kYdC9Oebutv5VWRcTujkzFgRjZw/viewform. "
-                                        "- Appeal fines: Contact libraryhelpdesk@bennett.edu.in or visit the HelpDesk. "
-                                        "- Download e-Books: Download chapters at https://bennett.refread.com/#/home. "
-                                        "- Inter Library Loan: Available via DELNET, contact library for details. "
-                                        "- Non-BU interns: Can use the library for reading only. "
-                                        "- Finding books on shelves: Search via OPAC; books have Call Numbers, and shelves are marked (see tutorial). "
-                                        "- Snacks in LRC: Not allowed, but water bottles are permitted. "
-                                        "- Drop Box issues: Confirm return via auto-generated email; if none, contact libraryhelpdesk@bennett.edu.in. "
-                                        "- Reserve a book: Use the 'Place Hold' feature in OPAC at https://libraryopac.bennett.edu.in/. "
-                                        "If the question is unrelated, politely redirect to library-related topics. "
-                                        f"User question: {prompt}"
-                                    )
-                                }
-                            ]
-                        }
-                    ]
-                }
+        if not GEMINI_API_KEY:
+            answer = "Gemini API Key is missing. Please set it as a secret in Streamlit Cloud."
+            logging.error("Gemini API Key is missing.")
+        else:
+            try:
+                payload = create_payload(prompt)
                 response = requests.post(
                     f"{GEMINI_API_ENDPOINT}?key={GEMINI_API_KEY}",
                     json=payload,
                     headers={"Content-Type": "application/json"}
                 )
                 if response.status_code == 200:
-                    answer = response.json().get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "Sorry, I couldn't find an answer.")
+                    try:
+                        candidates = response.json().get("candidates", [{}])
+                        answer = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "No answer found.")
+                        logging.info(f"API response: {response.json()}")
+                    except (IndexError, KeyError, TypeError):
+                        answer = "Unexpected response format from the Gemini API."
+                        logging.error(f"Response parsing failed: {response.json()}")
                 else:
-                    answer = f"Connection error: {response.status_code}"
-        except Exception as e:
-            answer = f"An error occurred: {str(e)}"
+                    answer = f"Connection error: {response.status_code} - {response.text}"
+                    logging.error(answer)
+            except Exception as e:
+                answer = f"An error occurred: {str(e)}"
+                logging.error(f"Error during API call: {e}")
 
         st.session_state.messages.append({"role": "assistant", "content": answer})
-        st.rerun()  # Refresh to show new messages
+        st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # Fixed Footer at bottom
+    # Footer
     st.markdown("""
     <div class="footer">
         <div style="margin: 0.5rem 0;">
