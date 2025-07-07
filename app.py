@@ -1,5 +1,10 @@
 import streamlit as st
 import requests
+import os
+
+# Secure Gemini API Key Handling (from Streamlit secrets or environment variable)
+GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"] if "GEMINI_API_KEY" in st.secrets else os.getenv("GEMINI_API_KEY")
+GEMINI_API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent"
 
 # Set page configuration
 st.set_page_config(
@@ -15,17 +20,14 @@ def inject_custom_css():
         :root {
             --header-color: #2e86c1;
         }
-
         .main .block-container {
             max-width: 900px;
             padding: 2rem 1rem;
         }
-
         .profile-container {
             text-align: center;
             margin-bottom: 1rem;
         }
-
         .quick-actions-row {
             display: flex;
             justify-content: center;
@@ -33,7 +35,6 @@ def inject_custom_css():
             margin: 1rem 0 2rem 0;
             width: 100%;
         }
-
         .quick-action-btn {
             background-color: #2e86c1;
             color: white !important;
@@ -50,16 +51,13 @@ def inject_custom_css():
             flex: 1;
             max-width: 200px;
         }
-
         .quick-action-btn:hover {
             transform: translateY(-2px);
             box-shadow: 0 4px 8px rgba(0,0,0,0.15);
         }
-
         .chat-container {
             margin: 2rem 0;
         }
-
         .static-chat-input {
             position: fixed;
             bottom: 80px;
@@ -69,17 +67,14 @@ def inject_custom_css():
             max-width: 800px;
             z-index: 100;
         }
-
         .stChatInput input {
             border-radius: 25px !important;
             padding: 12px 20px !important;
         }
-
         .stChatInput button {
             border-radius: 50% !important;
             background-color: var(--header-color) !important;
         }
-
         .footer {
             position: fixed;
             bottom: 0;
@@ -98,8 +93,6 @@ def inject_custom_css():
 # Initialize session state for chat history
 if "messages" not in st.session_state:
     st.session_state.messages = []
-
-
 
 def main():
     inject_custom_css()
@@ -152,55 +145,58 @@ def main():
 
         # Gemini API Call
         try:
-            payload = {
-                "contents": [
-                    {
-                        "parts": [
-                            {
-                                "text": (
-                                    "You are Ashu, an AI assistant for Bennett University Library. "
-                                    "Provide accurate and concise answers based on the following FAQ and library information. "
-                                    "Key information: "
-                                    "- Library website: https://library.bennett.edu.in/. "
-                                    "- Library timings: Weekdays 8:00 AM to 12:00 AM (midnight), Weekends & Holidays 9:00 AM to 5:00 PM (may vary during vacations, check https://library.bennett.edu.in/index.php/working-hours/). "
-                                    "- Physical book search: Use https://libraryopac.bennett.edu.in/ to search for physical books. For specific searches (e.g., by title or topic like 'Python'), guide users to enter terms in the catalog's title field. Automatic searches are not possible. "
-                                    "- e-Resources: Access digital books and journal articles at https://bennett.refread.com/#/home, available 24/7 remotely. "
-                                    "- Group Discussion Rooms: Book at http://10.6.0.121/gdroombooking/. "
-                                    "FAQ: "
-                                    "- Borrowing books: Use automated kiosks in the library (see library tutorial for details). "
-                                    "- Return books: Use the 24/7 Drop Box outside the library (see library tutorial). "
-                                    "- Overdue checks: Automated overdue emails are sent, or check via OPAC at https://libraryopac.bennett.edu.in/. "
-                                    "- Journal articles: Accessible 24/7 remotely at https://bennett.refread.com/#/home. "
-                                    "- Printing/Scanning: Available at the LRC from 9:00 AM to 5:30 PM. For laptop printing, email libraryhelpdesk@bennett.edu.in for official printouts or visit M-Block Library for other services. "
-                                    "- Alumni access: Alumni can access the LRC for reference. "
-                                    "- Book checkout limits: Refer to the library tutorial for details. "
-                                    "- Overdue fines: Pay via BU Payment Portal and update library staff. "
-                                    "- Book recommendations: Submit at https://docs.google.com/forms/d/e/1FAIpQLSeC0-LPlWvUbYBcN834Ct9kYdC9Oebutv5VWRcTujkzFgRjZw/viewform. "
-                                    "- Appeal fines: Contact libraryhelpdesk@bennett.edu.in or visit the HelpDesk. "
-                                    "- Download e-Books: Download chapters at https://bennett.refread.com/#/home. "
-                                    "- Inter Library Loan: Available via DELNET, contact library for details. "
-                                    "- Non-BU interns: Can use the library for reading only. "
-                                    "- Finding books on shelves: Search via OPAC; books have Call Numbers, and shelves are marked (see tutorial). "
-                                    "- Snacks in LRC: Not allowed, but water bottles are permitted. "
-                                    "- Drop Box issues: Confirm return via auto-generated email; if none, contact libraryhelpdesk@bennett.edu.in. "
-                                    "- Reserve a book: Use the 'Place Hold' feature in OPAC at https://libraryopac.bennett.edu.in/. "
-                                    "If the question is unrelated, politely redirect to library-related topics. "
-                                    f"User question: {prompt}"
-                                )
-                            }
-                        ]
-                    }
-                ]
-            }
-            response = requests.post(
-                f"{GEMINI_API_ENDPOINT}?key={GEMINI_API_KEY}",
-                json=payload,
-                headers={"Content-Type": "application/json"}
-            )
-            if response.status_code == 200:
-                answer = response.json().get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "Sorry, I couldn't find an answer.")
+            if not GEMINI_API_KEY:
+                answer = "Gemini API Key is missing. Please set it as a secret in Streamlit Cloud."
             else:
-                answer = f"Connection error: {response.status_code}"
+                payload = {
+                    "contents": [
+                        {
+                            "parts": [
+                                {
+                                    "text": (
+                                        "You are Ashu, an AI assistant for Bennett University Library. "
+                                        "Provide accurate and concise answers based on the following FAQ and library information. "
+                                        "Key information: "
+                                        "- Library website: https://library.bennett.edu.in/. "
+                                        "- Library timings: Weekdays 8:00 AM to 12:00 AM (midnight), Weekends & Holidays 9:00 AM to 5:00 PM (may vary during vacations, check https://library.bennett.edu.in/index.php/working-hours/). "
+                                        "- Physical book search: Use https://libraryopac.bennett.edu.in/ to search for physical books. For specific searches (e.g., by title or topic like 'Python'), guide users to enter terms in the catalog's title field. Automatic searches are not possible. "
+                                        "- e-Resources: Access digital books and journal articles at https://bennett.refread.com/#/home, available 24/7 remotely. "
+                                        "- Group Discussion Rooms: Book at http://10.6.0.121/gdroombooking/. "
+                                        "FAQ: "
+                                        "- Borrowing books: Use automated kiosks in the library (see library tutorial for details). "
+                                        "- Return books: Use the 24/7 Drop Box outside the library (see library tutorial). "
+                                        "- Overdue checks: Automated overdue emails are sent, or check via OPAC at https://libraryopac.bennett.edu.in/. "
+                                        "- Journal articles: Accessible 24/7 remotely at https://bennett.refread.com/#/home. "
+                                        "- Printing/Scanning: Available at the LRC from 9:00 AM to 5:30 PM. For laptop printing, email libraryhelpdesk@bennett.edu.in for official printouts or visit M-Block Library for other services. "
+                                        "- Alumni access: Alumni can access the LRC for reference. "
+                                        "- Book checkout limits: Refer to the library tutorial for details. "
+                                        "- Overdue fines: Pay via BU Payment Portal and update library staff. "
+                                        "- Book recommendations: Submit at https://docs.google.com/forms/d/e/1FAIpQLSeC0-LPlWvUbYBcN834Ct9kYdC9Oebutv5VWRcTujkzFgRjZw/viewform. "
+                                        "- Appeal fines: Contact libraryhelpdesk@bennett.edu.in or visit the HelpDesk. "
+                                        "- Download e-Books: Download chapters at https://bennett.refread.com/#/home. "
+                                        "- Inter Library Loan: Available via DELNET, contact library for details. "
+                                        "- Non-BU interns: Can use the library for reading only. "
+                                        "- Finding books on shelves: Search via OPAC; books have Call Numbers, and shelves are marked (see tutorial). "
+                                        "- Snacks in LRC: Not allowed, but water bottles are permitted. "
+                                        "- Drop Box issues: Confirm return via auto-generated email; if none, contact libraryhelpdesk@bennett.edu.in. "
+                                        "- Reserve a book: Use the 'Place Hold' feature in OPAC at https://libraryopac.bennett.edu.in/. "
+                                        "If the question is unrelated, politely redirect to library-related topics. "
+                                        f"User question: {prompt}"
+                                    )
+                                }
+                            ]
+                        }
+                    ]
+                }
+                response = requests.post(
+                    f"{GEMINI_API_ENDPOINT}?key={GEMINI_API_KEY}",
+                    json=payload,
+                    headers={"Content-Type": "application/json"}
+                )
+                if response.status_code == 200:
+                    answer = response.json().get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "Sorry, I couldn't find an answer.")
+                else:
+                    answer = f"Connection error: {response.status_code}"
         except Exception as e:
             answer = f"An error occurred: {str(e)}"
 
