@@ -1,13 +1,20 @@
 import streamlit as st
 import requests
-from streamlit_speech_recognition import speech_to_text
 import os
+import logging
 
-# ----------------- CONFIG -----------------
+# --- Logging Setup: Logs will be saved to app.log file for easy debugging ---
+logging.basicConfig(
+    filename='app.log',
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+
+# --- API Configuration ---
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"] if "GEMINI_API_KEY" in st.secrets else os.getenv("GEMINI_API_KEY")
 GEMINI_API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent"
 
-# -------------- CSS STYLE --------------
+# --- CSS Styles: Stored as a variable for better readability & maintainability ---
 CSS_STYLES = """
 <style>
     :root { --header-color: #2e86c1; }
@@ -21,16 +28,105 @@ CSS_STYLES = """
     .stChatInput input { border-radius: 25px !important; padding: 12px 20px !important; }
     .stChatInput button { border-radius: 50% !important; background-color: var(--header-color) !important; }
     .footer { position: fixed; bottom: 0; left: 0; right: 0; text-align: center; color: #666; padding: 1rem; background-color: white; z-index: 99; }
-    @media (max-width: 700px) { .main .block-container { padding: 0.5rem 0.2rem; } .static-chat-input { max-width: 98vw; } }
+    @media (max-width: 700px) {
+        .main .block-container { padding: 0.5rem 0.2rem; }
+        .static-chat-input { max-width: 98vw; }
+    }
 </style>
 """
+
 def inject_custom_css():
+    """Inject custom CSS for app styling and responsive design."""
     st.markdown(CSS_STYLES, unsafe_allow_html=True)
 
-# ------------- QUICK ACTIONS --------------
 def create_quick_action_button(text, url):
+    """Create HTML for a styled quick action button."""
     return f'<a href="{url}" target="_blank" class="quick-action-btn">{text}</a>'
+
+def create_payload(prompt):
+    """
+    Create a payload for the Gemini API request.
+
+    Args:
+        prompt (str): The user input prompt.
+
+    Returns:
+        dict: The payload object.
+    """
+    system_instruction = (
+        "You are Ashu, an AI assistant for Bennett University Library. "
+        "Provide accurate and concise answers based on the following FAQ and library information. "
+        "Key information: "
+        "- Library website: https://library.bennett.edu.in/. "
+        "- Library timings: Weekdays 8:00 AM to 12:00 AM (midnight), Weekends & Holidays 9:00 AM to 5:00 PM (may vary during vacations, check https://library.bennett.edu.in/index.php/working-hours/). "
+        "- Physical book search: Use https://libraryopac.bennett.edu.in/ to search for physical books. For specific searches (e.g., by title or topic like 'Python'), guide users to enter terms in the catalog's title field. Automatic searches are not possible. "
+        "- e-Resources: Access digital books and journal articles at https://bennett.refread.com/#/home, available 24/7 remotely. "
+        "- Group Discussion Rooms: Book at http://10.6.0.121/gdroombooking/. "
+        "FAQ: "
+        "- Borrowing books: Use automated kiosks in the library (see library tutorial for details). "
+        "- Return books: Use the 24/7 Drop Box outside the library (see library tutorial). "
+        "- Overdue checks: Automated overdue emails are sent, or check via OPAC at https://libraryopac.bennett.edu.in/. "
+        "- Journal articles: Accessible 24/7 remotely at https://bennett.refread.com/#/home. "
+        "- Printing/Scanning: Available at the LRC from 9:00 AM to 5:30 PM. For laptop printing, email libraryhelpdesk@bennett.edu.in for official printouts or visit M-Block Library for other services. "
+        "- Alumni access: Alumni can access the LRC for reference. "
+        "- Book checkout limits: Refer to the library tutorial for details. "
+        "- Overdue fines: Pay via BU Payment Portal and update library staff. "
+        "- Book recommendations: Submit at https://docs.google.com/forms/d/e/1FAIpQLSeC0-LPlWvUbYBcN834Ct9kYdC9Oebutv5VWRcTujkzFgRjZw/viewform. "
+        "- Appeal fines: Contact libraryhelpdesk@bennett.edu.in or visit the HelpDesk. "
+        "- Download e-Books: Download chapters at https://bennett.refread.com/#/home. "
+        "- Inter Library Loan: Available via DELNET, contact library for details. "
+        "- Non-BU interns: Can use the library for reading only. "
+        "- Finding books on shelves: Search via OPAC; books have Call Numbers, and shelves are marked (see tutorial). "
+        "- Snacks in LRC: Not allowed, but water bottles are permitted. "
+        "- Drop Box issues: Confirm return via auto-generated email; if none, contact libraryhelpdesk@bennett.edu.in. "
+        "- Reserve a book: Use the 'Place Hold' feature in OPAC at https://libraryopac.bennett.edu.in/. "
+        "If the question is unrelated, politely redirect to library-related topics. "
+        f"User question: {prompt}"
+    )
+    return {
+        "contents": [
+            {"parts": [{"text": system_instruction}]}
+        ]
+    }
+
+def call_gemini_api(payload):
+    """
+    Send the payload to Gemini API and handle the response.
+
+    Args:
+        payload (dict): Payload for Gemini API.
+
+    Returns:
+        str: Gemini API answer or error message.
+    """
+    if not GEMINI_API_KEY:
+        logging.error("Gemini API Key is missing.")
+        return "Gemini API Key is missing. Please set it as a secret in Streamlit Cloud."
+    try:
+        response = requests.post(
+            f"{GEMINI_API_ENDPOINT}?key={GEMINI_API_KEY}",
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=15
+        )
+        if response.status_code == 200:
+            try:
+                candidates = response.json().get("candidates", [{}])
+                answer = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "No answer found.")
+                logging.info("Gemini API success: %s", answer[:100])
+            except Exception as e:
+                logging.error(f"Error parsing response: {e}")
+                answer = "An error occurred while processing your request."
+        else:
+            answer = f"Connection error: {response.status_code} - {response.text}"
+            logging.error(answer)
+    except requests.RequestException as e:
+        answer = "A network error occurred. Please try again later."
+        logging.error(f"Network/API error: {e}")
+    return answer
+
 def show_quick_actions():
+    """Display the row of quick action buttons."""
     quick_actions = [
         ("Find e-Resources", "https://bennett.refread.com/#/home"),
         ("Find Books", "https://libraryopac.bennett.edu.in/"),
@@ -44,89 +140,18 @@ def show_quick_actions():
         unsafe_allow_html=True
     )
 
-# ------------- PAYLOAD FOR GEMINI --------------
-def create_payload(prompt, lang):
-    sys_inst = {
-        "en": (
-            "You are Ashu, an AI assistant for Bennett University Library. "
-            "Answer concisely. FAQs: "
-            "- Library timings: Weekdays 8AM-12AM, Weekends/Holidays 9AM-5PM. "
-            "- Find books: https://libraryopac.bennett.edu.in/ . "
-            "- E-Resources: https://bennett.refread.com/#/home . "
-            "- Book GD Room: http://10.6.0.121/gdroombooking/ ."
-            " If unrelated, politely redirect to library topics."
-            f" User question: {prompt}"
-        ),
-        "hi": (
-            "आप Ashu, Bennett University Library के AI सहायक हैं। जवाब संक्षिप्त और सही दें। मुख्य जानकारी:"
-            "- लाइब्रेरी समय: सप्ताह के दिन 8AM-12AM, शनिवार-रविवार/छुट्टी 9AM-5PM। "
-            "- पुस्तक खोजें: https://libraryopac.bennett.edu.in/ । "
-            "- ई-रिसोर्सेज़: https://bennett.refread.com/#/home । "
-            "- GD रूम बुक करें: http://10.6.0.121/gdroombooking/ । "
-            " अगर सवाल लाइब्रेरी से न जुड़ा हो तो विनम्रता से redirect करें।"
-            f" यूज़र सवाल: {prompt}"
-        )
-    }
-    return {
-        "contents": [
-            {"parts": [{"text": sys_inst[lang]}]}
-        ]
-    }
+# --- Session state for chat history ---
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-# ------------- GEMINI API CALL --------------
-def call_gemini_api(payload):
-    if not GEMINI_API_KEY:
-        return "❗ Gemini API Key is missing. Please set it in Streamlit Secrets."
-    try:
-        response = requests.post(
-            f"{GEMINI_API_ENDPOINT}?key={GEMINI_API_KEY}",
-            json=payload,
-            headers={"Content-Type": "application/json"},
-            timeout=20
-        )
-        if response.status_code == 200:
-            try:
-                candidates = response.json().get("candidates", [{}])
-                answer = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "No answer found.")
-            except Exception:
-                answer = "❗ Sorry, response format changed."
-        else:
-            answer = f"❗ Connection error: {response.status_code}"
-    except Exception as e:
-        answer = f"❗ Network error: {str(e)}"
-    return answer
-
-# ------------- TEXT TO SPEECH BUTTON (JS) --------------
-def speak_button(text, lang_code):
-    safe_text = text.replace("'", "").replace('"', "").replace('\n', ' ')
-    js_lang = 'hi-IN' if lang_code == 'hi' else 'en-US'
-    st.markdown(
-        f"""
-        <button onclick="var u=new SpeechSynthesisUtterance('{safe_text}');u.lang='{js_lang}';speechSynthesis.speak(u)">🔊 सुनें / Listen</button>
-        """,
-        unsafe_allow_html=True
-    )
-
-# ---------------- MAIN APP -----------------
 def main():
     inject_custom_css()
 
-    # Language Toggle
-    st.markdown('<div style="text-align:right">🌐', unsafe_allow_html=True)
-    lang = st.radio(
-        "Choose Language / भाषा चुनें", 
-        options=[('English', 'en'), ('हिंदी', 'hi')],
-        format_func=lambda x: x[0],
-        horizontal=True,
-        label_visibility="collapsed"
-    )
-    lang_code = lang[1]
-
-    # Header/Profile
+    # --- Header Section ---
     st.markdown("""
     <div class="profile-container">
         <img src="https://library.bennett.edu.in/wp-content/uploads/2024/05/WhatsApp-Image-2024-05-01-at-12.41.02-PM-e1714549052999-150x150.jpeg" 
-             width="150" alt="Ashu AI Assistant"
+             width="150" 
              style="border-radius: 50%; border: 3px solid #2e86c1; margin-bottom: 1rem;">
         <h1 style="color: #2e86c1; margin-bottom: 0.5rem; font-size: 2em;">Ashu AI Assistant at Bennett University Library</h1>
     </div>
@@ -134,55 +159,35 @@ def main():
 
     show_quick_actions()
 
-    # Welcome
-    st.markdown(f"""
+    # --- Welcome Message ---
+    st.markdown("""
     <div style="text-align: center; margin: 2rem 0;">
-        <p style="font-size: 1.1em;">
-            {"Hello! I am Ashu, your AI assistant at Bennett University Library. How can I help you today?" if lang_code == "en" else "नमस्ते! मैं Ashu हूं, आपकी लाइब्रेरी AI सहायक। क्या मदद कर सकता हूं?"}
-        </p>
+        <p style="font-size: 1.1em;">Hello! I am Ashu, your AI assistant at Bennett University Library. How can I help you today?</p>
     </div>
     """, unsafe_allow_html=True)
 
-    # Session for chat
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-
-    # --- Speech-to-Text Section (Hindi/English) ---
-    st.write("🎤 बोलकर पूछें / Speak your question:")
-    user_voice = speech_to_text(language='hi-IN' if lang_code == 'hi' else 'en-US', use_container_width=True)
-    st.session_state['input_text'] = user_voice if user_voice else ""
-
-    # --- Chat Box ---
-    st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
-    prompt = st.chat_input(
-        "Ask me about BU Library (e.g., 'What are the library hours?')" if lang_code == "en"
-        else "लाइब्रेरी के बारे में पूछें (जैसे: 'लाइब्रेरी कब खुलती है?')",
-        value=st.session_state.get('input_text', '')
-    )
-
-    # Clear Chat Button
-    if st.button("🗑️ Clear Chat / चैट साफ करें", use_container_width=True):
-        st.session_state.messages = []
-        st.experimental_rerun()
-
-    # Show messages
+    # --- Chat History Display ---
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
-            if message["role"] == "assistant":
-                speak_button(message["content"], lang_code)
 
-    # On user input
+    # --- Chat Input at Bottom ---
+    st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
+    prompt = st.chat_input("Ask me about BU Library (e.g., 'What are the library hours?')")
+
     if prompt:
         st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.spinner("Ashu is typing..." if lang_code == "en" else "Ashu जवाब दे रहा है..."):
-            payload = create_payload(prompt, lang_code)
+
+        # --- Show a loading indicator while processing (for user experience) ---
+        with st.spinner("Ashu is typing..."):
+            payload = create_payload(prompt)
             answer = call_gemini_api(payload)
+
         st.session_state.messages.append({"role": "assistant", "content": answer})
         st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # Footer
+    # --- Fixed Footer ---
     st.markdown("""
     <div class="footer">
         <div style="margin: 0.5rem 0;">
