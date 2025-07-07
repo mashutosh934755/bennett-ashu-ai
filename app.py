@@ -2,9 +2,8 @@ import streamlit as st
 import requests
 import os
 import logging
-import streamlit.components.v1 as components
 
-# --- Logging Setup ---
+# --- Logging Setup: Logs will be saved to app.log file for easy debugging ---
 logging.basicConfig(
     filename='app.log',
     level=logging.INFO,
@@ -15,7 +14,7 @@ logging.basicConfig(
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"] if "GEMINI_API_KEY" in st.secrets else os.getenv("GEMINI_API_KEY")
 GEMINI_API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent"
 
-# --- CSS Styles ---
+# --- CSS Styles: Stored as a variable for better readability & maintainability ---
 CSS_STYLES = """
 <style>
     :root { --header-color: #2e86c1; }
@@ -47,8 +46,12 @@ def create_quick_action_button(text, url):
 def create_payload(prompt):
     """
     Create a payload for the Gemini API request.
-    Args: prompt (str): The user input prompt.
-    Returns: dict: The payload object.
+
+    Args:
+        prompt (str): The user input prompt.
+
+    Returns:
+        dict: The payload object.
     """
     system_instruction = (
         "You are Ashu, an AI assistant for Bennett University Library. "
@@ -89,8 +92,12 @@ def create_payload(prompt):
 def call_gemini_api(payload):
     """
     Send the payload to Gemini API and handle the response.
-    Args: payload (dict): Payload for Gemini API.
-    Returns: str: Gemini API answer or error message.
+
+    Args:
+        payload (dict): Payload for Gemini API.
+
+    Returns:
+        str: Gemini API answer or error message.
     """
     if not GEMINI_API_KEY:
         logging.error("Gemini API Key is missing.")
@@ -133,38 +140,6 @@ def show_quick_actions():
         unsafe_allow_html=True
     )
 
-# --- VOICE INPUT BUTTON FUNCTION ---
-def voice_input(label="🎤 Speak (English/Hindi)", lang="en-IN"):
-    speech_code = f"""
-    <script>
-    function startRecognition() {{
-        var recognition = new(window.SpeechRecognition || window.webkitSpeechRecognition)();
-        recognition.lang = '{lang}';
-        recognition.onresult = function(event) {{
-            var result = event.results[0][0].transcript;
-            window.parent.postMessage({{isStreamlitMessage: true, type: 'streamlit_voice_input', value: result}}, '*');
-        }};
-        recognition.start();
-    }}
-    </script>
-    <button onclick="startRecognition()">{label}</button>
-    """
-    components.html(speech_code, height=50)
-    js = """
-    <script>
-    window.addEventListener('message', (event) => {
-      if (event.data && event.data.type === 'streamlit_voice_input') {
-        const textarea = window.parent.document.querySelector('textarea[data-baseweb="textarea"]');
-        if (textarea) {
-          textarea.value = event.data.value;
-          textarea.dispatchEvent(new Event('input', { bubbles: true }));
-        }
-      }
-    });
-    </script>
-    """
-    components.html(js, height=0)
-
 # --- Session state for chat history ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -177,7 +152,7 @@ def main():
     <div class="profile-container">
         <img src="https://library.bennett.edu.in/wp-content/uploads/2024/05/WhatsApp-Image-2024-05-01-at-12.41.02-PM-e1714549052999-150x150.jpeg" 
              width="150" 
-             style="border-radius: 50%; border: 3px solid #2e86c1; margin-bottom: 1rem;" alt="Ashu AI Assistant">
+             style="border-radius: 50%; border: 3px solid #2e86c1; margin-bottom: 1rem;">
         <h1 style="color: #2e86c1; margin-bottom: 0.5rem; font-size: 2em;">Ashu AI Assistant at Bennett University Library</h1>
     </div>
     """, unsafe_allow_html=True)
@@ -196,9 +171,6 @@ def main():
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    # --- VOICE INPUT BUTTON (Mic) ---
-    voice_input(label="🎤 Speak (English/Hindi)", lang="en-IN")
-
     # --- Chat Input at Bottom ---
     st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
     prompt = st.chat_input("Ask me about BU Library (e.g., 'What are the library hours?')")
@@ -206,7 +178,7 @@ def main():
     if prompt:
         st.session_state.messages.append({"role": "user", "content": prompt})
 
-        # --- Show a loading indicator while processing ---
+        # --- Show a loading indicator while processing (for user experience) ---
         with st.spinner("Ashu is typing..."):
             payload = create_payload(prompt)
             answer = call_gemini_api(payload)
