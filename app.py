@@ -99,9 +99,7 @@ def inject_custom_css():
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# API Configuration
-GEMINI_API_KEY = "AIzaSyAcwrIy6DPL74GH8S8onpTHizwwg3XHJ6k"
-GEMINI_API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent"
+
 
 def main():
     inject_custom_css()
