@@ -3,45 +3,56 @@ import requests
 import os
 import logging
 
-# --- Logging setup for debug/info/error tracking ---
+# --- Logging Setup: Logs will be saved to app.log file for easy debugging ---
 logging.basicConfig(
+    filename='app.log',
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# --- Securely load Gemini API key ---
+# --- API Configuration ---
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"] if "GEMINI_API_KEY" in st.secrets else os.getenv("GEMINI_API_KEY")
 GEMINI_API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent"
 
-# --- Helper: inject custom CSS (for style & responsive design) ---
-def inject_custom_css():
-    css = """
-    <style>
-        :root { --header-color: #2e86c1; }
-        .main .block-container { max-width: 900px; padding: 2rem 1rem; }
-        .profile-container { text-align: center; margin-bottom: 1rem; }
-        .quick-actions-row { display: flex; justify-content: center; gap: 10px; margin: 1rem 0 2rem 0; width: 100%; }
-        .quick-action-btn { background-color: #2e86c1; color: white !important; padding: 10px 15px; border-radius: 20px; border: none; box-shadow: 0 2px 5px rgba(0,0,0,0.1); transition: all 0.3s; font-size: 14px; text-decoration: none; text-align: center; cursor: pointer; white-space: nowrap; flex: 1; max-width: 200px; }
-        .quick-action-btn:hover { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.15); }
-        .chat-container { margin: 2rem 0; }
-        .static-chat-input { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); width: 100%; max-width: 800px; z-index: 100; }
-        .stChatInput input { border-radius: 25px !important; padding: 12px 20px !important; }
-        .stChatInput button { border-radius: 50% !important; background-color: var(--header-color) !important; }
-        .footer { position: fixed; bottom: 0; left: 0; right: 0; text-align: center; color: #666; padding: 1rem; background-color: white; z-index: 99; }
-        @media (max-width: 700px) {
-            .main .block-container { padding: 0.5rem 0.2rem; }
-            .static-chat-input { max-width: 98vw; }
-        }
-    </style>
-    """
-    st.markdown(css, unsafe_allow_html=True)
+# --- CSS Styles: Stored as a variable for better readability & maintainability ---
+CSS_STYLES = """
+<style>
+    :root { --header-color: #2e86c1; }
+    .main .block-container { max-width: 900px; padding: 2rem 1rem; }
+    .profile-container { text-align: center; margin-bottom: 1rem; }
+    .quick-actions-row { display: flex; justify-content: center; gap: 10px; margin: 1rem 0 2rem 0; width: 100%; }
+    .quick-action-btn { background-color: #2e86c1; color: white !important; padding: 10px 15px; border-radius: 20px; border: none; box-shadow: 0 2px 5px rgba(0,0,0,0.1); transition: all 0.3s; font-size: 14px; text-decoration: none; text-align: center; cursor: pointer; white-space: nowrap; flex: 1; max-width: 200px; }
+    .quick-action-btn:hover { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.15); }
+    .chat-container { margin: 2rem 0; }
+    .static-chat-input { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); width: 100%; max-width: 800px; z-index: 100; }
+    .stChatInput input { border-radius: 25px !important; padding: 12px 20px !important; }
+    .stChatInput button { border-radius: 50% !important; background-color: var(--header-color) !important; }
+    .footer { position: fixed; bottom: 0; left: 0; right: 0; text-align: center; color: #666; padding: 1rem; background-color: white; z-index: 99; }
+    @media (max-width: 700px) {
+        .main .block-container { padding: 0.5rem 0.2rem; }
+        .static-chat-input { max-width: 98vw; }
+    }
+</style>
+"""
 
-# --- Helper: create quick action button HTML ---
+def inject_custom_css():
+    """Inject custom CSS for app styling and responsive design."""
+    st.markdown(CSS_STYLES, unsafe_allow_html=True)
+
 def create_quick_action_button(text, url):
+    """Create HTML for a styled quick action button."""
     return f'<a href="{url}" target="_blank" class="quick-action-btn">{text}</a>'
 
-# --- Helper: build Gemini API payload ---
 def create_payload(prompt):
+    """
+    Create a payload for the Gemini API request.
+
+    Args:
+        prompt (str): The user input prompt.
+
+    Returns:
+        dict: The payload object.
+    """
     system_instruction = (
         "You are Ashu, an AI assistant for Bennett University Library. "
         "Provide accurate and concise answers based on the following FAQ and library information. "
@@ -78,6 +89,57 @@ def create_payload(prompt):
         ]
     }
 
+def call_gemini_api(payload):
+    """
+    Send the payload to Gemini API and handle the response.
+
+    Args:
+        payload (dict): Payload for Gemini API.
+
+    Returns:
+        str: Gemini API answer or error message.
+    """
+    if not GEMINI_API_KEY:
+        logging.error("Gemini API Key is missing.")
+        return "Gemini API Key is missing. Please set it as a secret in Streamlit Cloud."
+    try:
+        response = requests.post(
+            f"{GEMINI_API_ENDPOINT}?key={GEMINI_API_KEY}",
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=15
+        )
+        if response.status_code == 200:
+            try:
+                candidates = response.json().get("candidates", [{}])
+                answer = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "No answer found.")
+                logging.info("Gemini API success: %s", answer[:100])
+            except Exception as e:
+                logging.error(f"Error parsing response: {e}")
+                answer = "An error occurred while processing your request."
+        else:
+            answer = f"Connection error: {response.status_code} - {response.text}"
+            logging.error(answer)
+    except requests.RequestException as e:
+        answer = "A network error occurred. Please try again later."
+        logging.error(f"Network/API error: {e}")
+    return answer
+
+def show_quick_actions():
+    """Display the row of quick action buttons."""
+    quick_actions = [
+        ("Find e-Resources", "https://bennett.refread.com/#/home"),
+        ("Find Books", "https://libraryopac.bennett.edu.in/"),
+        ("Working Hours", "https://library.bennett.edu.in/index.php/working-hours/"),
+        ("Book GD Rooms", "http://10.6.0.121/gdroombooking/")
+    ]
+    st.markdown(
+        '<div class="quick-actions-row">' +
+        "".join([create_quick_action_button(t, u) for t, u in quick_actions]) +
+        '</div>',
+        unsafe_allow_html=True
+    )
+
 # --- Session state for chat history ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -95,14 +157,7 @@ def main():
     </div>
     """, unsafe_allow_html=True)
 
-    # --- Quick Action Buttons ---
-    quick_actions = [
-        ("Find e-Resources", "https://bennett.refread.com/#/home"),
-        ("Find Books", "https://libraryopac.bennett.edu.in/"),
-        ("Working Hours", "https://library.bennett.edu.in/index.php/working-hours/"),
-        ("Book GD Rooms", "http://10.6.0.121/gdroombooking/")
-    ]
-    st.markdown('<div class="quick-actions-row">' + "".join([create_quick_action_button(t, u) for t, u in quick_actions]) + '</div>', unsafe_allow_html=True)
+    show_quick_actions()
 
     # --- Welcome Message ---
     st.markdown("""
@@ -111,42 +166,22 @@ def main():
     </div>
     """, unsafe_allow_html=True)
 
-    # --- Chat History ---
+    # --- Chat History Display ---
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
     # --- Chat Input at Bottom ---
     st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
-    if prompt := st.chat_input("Ask me anything about BU Library..."):
+    prompt = st.chat_input("Ask me about BU Library (e.g., 'What are the library hours?')")
+
+    if prompt:
         st.session_state.messages.append({"role": "user", "content": prompt})
 
-        # --- Gemini API Integration with Error Handling & Logging ---
-        if not GEMINI_API_KEY:
-            answer = "Gemini API Key is missing. Please set it as a secret in Streamlit Cloud."
-            logging.error("Gemini API Key is missing.")
-        else:
-            try:
-                payload = create_payload(prompt)
-                response = requests.post(
-                    f"{GEMINI_API_ENDPOINT}?key={GEMINI_API_KEY}",
-                    json=payload,
-                    headers={"Content-Type": "application/json"}
-                )
-                if response.status_code == 200:
-                    try:
-                        candidates = response.json().get("candidates", [{}])
-                        answer = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "No answer found.")
-                        logging.info(f"API response: {response.json()}")
-                    except (IndexError, KeyError, TypeError):
-                        answer = "Unexpected response format from the Gemini API."
-                        logging.error(f"Response parsing failed: {response.json()}")
-                else:
-                    answer = f"Connection error: {response.status_code} - {response.text}"
-                    logging.error(answer)
-            except Exception as e:
-                answer = f"An error occurred: {str(e)}"
-                logging.error(f"Error during API call: {e}")
+        # --- Show a loading indicator while processing (for user experience) ---
+        with st.spinner("Ashu is typing..."):
+            payload = create_payload(prompt)
+            answer = call_gemini_api(payload)
 
         st.session_state.messages.append({"role": "assistant", "content": answer})
         st.rerun()
