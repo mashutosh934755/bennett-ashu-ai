@@ -3,22 +3,22 @@ import requests
 import os
 import logging
 
-# Logging setup
+# --- Logging Setup ---
 logging.basicConfig(
     filename='app.log',
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# Gemini API config
-GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"] if "GEMINI_API_KEY" in st.secrets else os.getenv("GEMINI_API_KEY")
+# --- Load API Keys securely from Streamlit secrets ---
+GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
+SP_API_KEY = st.secrets.get("SP_API_KEY", os.getenv("SP_API_KEY", "UJjJ2uHHxL5A1hOTzfIz"))
+
+# --- API Endpoints ---
 GEMINI_API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent"
+SP_API_BASE = "http://localhost/sp4.5.1/api"  # Change this if SubjectsPlus runs elsewhere
 
-# SubjectsPlus API config
-SP_API_BASE = "http://localhost/sp4.5.1/api"  # Change if running on another host
-SP_API_KEY = "UJjJ2uHHxL5A1hOTzfIz"
-
-# School/shortform mapping for queries
+# --- School/shortform mapping ---
 shortform_map = {
     "school of law": "LAW",
     "law": "LAW",
@@ -30,7 +30,7 @@ shortform_map = {
     "som": "manage"
 }
 
-# CSS Styles
+# --- Custom CSS ---
 CSS_STYLES = """
 <style>
     :root { --header-color: #2e86c1; }
@@ -56,6 +56,20 @@ def inject_custom_css():
 
 def create_quick_action_button(text, url):
     return f'<a href="{url}" target="_blank" class="quick-action-btn">{text}</a>'
+
+def show_quick_actions():
+    quick_actions = [
+        ("Find e-Resources", "https://bennett.refread.com/#/home"),
+        ("Find Books", "https://libraryopac.bennett.edu.in/"),
+        ("Working Hours", "https://library.bennett.edu.in/index.php/working-hours/"),
+        ("Book GD Rooms", "http://10.6.0.121/gdroombooking/")
+    ]
+    st.markdown(
+        '<div class="quick-actions-row">' +
+        "".join([create_quick_action_button(t, u) for t, u in quick_actions]) +
+        '</div>',
+        unsafe_allow_html=True
+    )
 
 def create_payload(prompt):
     system_instruction = (
@@ -134,7 +148,6 @@ def fetch_guide_by_shortform(shortform):
         return []
 
 def detect_and_fetch_guides(prompt):
-    # Try to fetch guides if prompt matches mapped shortforms
     prompt_lc = prompt.lower().strip()
     results = []
     for key, shortform in shortform_map.items():
@@ -144,20 +157,6 @@ def detect_and_fetch_guides(prompt):
                 results.extend(guides)
     return results
 
-def show_quick_actions():
-    quick_actions = [
-        ("Find e-Resources", "https://bennett.refread.com/#/home"),
-        ("Find Books", "https://libraryopac.bennett.edu.in/"),
-        ("Working Hours", "https://library.bennett.edu.in/index.php/working-hours/"),
-        ("Book GD Rooms", "http://10.6.0.121/gdroombooking/")
-    ]
-    st.markdown(
-        '<div class="quick-actions-row">' +
-        "".join([create_quick_action_button(t, u) for t, u in quick_actions]) +
-        '</div>',
-        unsafe_allow_html=True
-    )
-
 # --- Session state for chat history ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -165,7 +164,7 @@ if "messages" not in st.session_state:
 def main():
     inject_custom_css()
 
-    # --- Header Section ---
+    # Header
     st.markdown("""
     <div class="profile-container">
         <img src="https://library.bennett.edu.in/wp-content/uploads/2024/05/WhatsApp-Image-2024-05-01-at-12.41.02-PM-e1714549052999-150x150.jpeg" 
@@ -177,19 +176,19 @@ def main():
 
     show_quick_actions()
 
-    # --- Welcome Message ---
+    # Welcome message
     st.markdown("""
     <div style="text-align: center; margin: 2rem 0;">
         <p style="font-size: 1.1em;">Hello! I am Ashu, your AI assistant at Bennett University Library. How can I help you today?</p>
     </div>
     """, unsafe_allow_html=True)
 
-    # --- Chat History Display ---
+    # Chat history
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    # --- Chat Input at Bottom ---
+    # Chat input at bottom
     st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
     prompt = st.chat_input("Ask me about BU Library (e.g., 'What are the library hours?' or 'school of law', 'socet')")
 
@@ -210,7 +209,7 @@ def main():
         st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # --- Fixed Footer ---
+    # Footer
     st.markdown("""
     <div class="footer">
         <div style="margin: 0.5rem 0;">
