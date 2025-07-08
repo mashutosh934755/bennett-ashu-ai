@@ -3,34 +3,29 @@ import requests
 import os
 import logging
 
-# --- Logging Setup ---
+# ---------- Logging Setup ----------
 logging.basicConfig(
     filename='app.log',
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# --- Load API Keys securely from Streamlit secrets ---
-GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
-SP_API_KEY = st.secrets.get("SP_API_KEY", os.getenv("SP_API_KEY", "UJjJ2uHHxL5A1hOTzfIz"))
-
-# --- API Endpoints ---
+# ---------- API Config ----------
+GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"] if "GEMINI_API_KEY" in st.secrets else os.getenv("GEMINI_API_KEY")
 GEMINI_API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent"
-SP_API_BASE = "http://localhost/sp4.5.1/api"  # Change this if SubjectsPlus runs elsewhere
 
-# --- School/shortform mapping ---
+# SubjectsPlus Integration Parameters
+SP_API_BASE = "http://localhost/sp4.5.1/api"
+SP_API_KEY = "UJjJ2uHHxL5A1hOTzfIz"
+
 shortform_map = {
     "school of law": "LAW",
     "law": "LAW",
     "sol": "LAW",
-    "socet": "CET",
-    "soeas": "EAS",
-    "sod": "Design",
-    "soai": "(AI)",
-    "som": "manage"
+    # Add more as needed (e.g. "socet": "CET")
 }
 
-# --- Custom CSS ---
+# ---------- CSS Styles ----------
 CSS_STYLES = """
 <style>
     :root { --header-color: #2e86c1; }
@@ -71,6 +66,7 @@ def show_quick_actions():
         unsafe_allow_html=True
     )
 
+# -------- Gemini API helpers --------
 def create_payload(prompt):
     system_instruction = (
         "You are Ashu, an AI assistant for Bennett University Library. "
@@ -135,6 +131,7 @@ def call_gemini_api(payload):
         logging.error(f"Network/API error: {e}")
     return answer
 
+# -------- SubjectsPlus Integration --------
 def fetch_guide_by_shortform(shortform):
     url = f"{SP_API_BASE}/guides/shortform/{shortform}/key/{SP_API_KEY}"
     try:
@@ -142,29 +139,26 @@ def fetch_guide_by_shortform(shortform):
         if resp.status_code == 200:
             guides = resp.json().get("guide", [])
             return guides
-        else:
-            return []
-    except Exception as e:
+    except Exception:
         return []
+    return []
 
 def detect_and_fetch_guides(prompt):
-    prompt_lc = prompt.lower().strip()
-    results = []
+    prompt_lc = prompt.strip().lower()
     for key, shortform in shortform_map.items():
         if key in prompt_lc:
-            guides = fetch_guide_by_shortform(shortform)
-            if guides:
-                results.extend(guides)
-    return results
+            return fetch_guide_by_shortform(shortform)
+    return []
 
-# --- Session state for chat history ---
+# -------- Chat History --------
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+# -------- Streamlit App Main Function --------
 def main():
     inject_custom_css()
 
-    # Header
+    # ---------- Header Section ----------
     st.markdown("""
     <div class="profile-container">
         <img src="https://library.bennett.edu.in/wp-content/uploads/2024/05/WhatsApp-Image-2024-05-01-at-12.41.02-PM-e1714549052999-150x150.jpeg" 
@@ -176,40 +170,44 @@ def main():
 
     show_quick_actions()
 
-    # Welcome message
+    # ---------- Welcome Message ----------
     st.markdown("""
     <div style="text-align: center; margin: 2rem 0;">
         <p style="font-size: 1.1em;">Hello! I am Ashu, your AI assistant at Bennett University Library. How can I help you today?</p>
     </div>
     """, unsafe_allow_html=True)
 
-    # Chat history
+    # ---------- Chat History Display ----------
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    # Chat input at bottom
+    # ---------- Chat Input At Bottom ----------
     st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
     prompt = st.chat_input("Ask me about BU Library (e.g., 'What are the library hours?' or 'school of law', 'socet')")
 
     if prompt:
         st.session_state.messages.append({"role": "user", "content": prompt})
+
+        # ---------- SubjectsPlus guide detection before Gemini ----------
         guides = detect_and_fetch_guides(prompt)
         if guides:
             reply = "Here are the guides matching your query:\n\n"
             for guide in guides:
                 reply += f"- [{guide['title'].strip()} ({guide['shortform']})]({guide['url']})\n"
-        elif "guide" in prompt.lower():
-            reply = "No guides found for your query. Try searching with the exact name or ask about a specific school, topic, or subject."
+                if guide.get('description'):
+                    reply += f"    {guide['description']}\n"
+            st.session_state.messages.append({"role": "assistant", "content": reply})
+            st.rerun()
         else:
             with st.spinner("Ashu is typing..."):
                 payload = create_payload(prompt)
-                reply = call_gemini_api(payload)
-        st.session_state.messages.append({"role": "assistant", "content": reply})
-        st.rerun()
+                answer = call_gemini_api(payload)
+            st.session_state.messages.append({"role": "assistant", "content": answer})
+            st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # Footer
+    # ---------- Fixed Footer ----------
     st.markdown("""
     <div class="footer">
         <div style="margin: 0.5rem 0;">
