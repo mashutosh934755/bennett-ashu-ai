@@ -3,24 +3,18 @@ import requests
 import os
 import logging
 
-# Logging setup
+# --- Logging Setup: Logs will be saved to app.log file for easy debugging ---
 logging.basicConfig(
     filename='app.log',
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# Gemini API config
+# --- API Configuration ---
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"] if "GEMINI_API_KEY" in st.secrets else os.getenv("GEMINI_API_KEY")
 GEMINI_API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent"
 
-# Koha Demo API config
-KOHA_API_URL = "https://demo-admin.bibkat.no/api/v1/biblios"
-KOHA_USERNAME = "demo"
-KOHA_PASSWORD = "demo"
-KOHA_HEADERS = {"Accept": "application/json"}
-
-# CSS styles
+# --- CSS Styles: Stored as a variable for better readability & maintainability ---
 CSS_STYLES = """
 <style>
     :root { --header-color: #2e86c1; }
@@ -42,15 +36,51 @@ CSS_STYLES = """
 """
 
 def inject_custom_css():
+    """Inject custom CSS for app styling and responsive design."""
     st.markdown(CSS_STYLES, unsafe_allow_html=True)
 
 def create_quick_action_button(text, url):
+    """Create HTML for a styled quick action button."""
     return f'<a href="{url}" target="_blank" class="quick-action-btn">{text}</a>'
 
 def create_payload(prompt):
+    """
+    Create a payload for the Gemini API request.
+
+    Args:
+        prompt (str): The user input prompt.
+
+    Returns:
+        dict: The payload object.
+    """
     system_instruction = (
         "You are Ashu, an AI assistant for Bennett University Library. "
-        # ... [unchanged: same as your code]
+        "Provide accurate and concise answers based on the following FAQ and library information. "
+        "Key information: "
+        "- Library website: https://library.bennett.edu.in/. "
+        "- Library timings: Weekdays 8:00 AM to 12:00 AM (midnight), Weekends & Holidays 9:00 AM to 5:00 PM (may vary during vacations, check https://library.bennett.edu.in/index.php/working-hours/). "
+        "- Physical book search: Use https://libraryopac.bennett.edu.in/ to search for physical books. For specific searches (e.g., by title or topic like 'Python'), guide users to enter terms in the catalog's title field. Automatic searches are not possible. "
+        "- e-Resources: Access digital books and journal articles at https://bennett.refread.com/#/home, available 24/7 remotely. "
+        "- Group Discussion Rooms: Book at http://10.6.0.121/gdroombooking/. "
+        "FAQ: "
+        "- Borrowing books: Use automated kiosks in the library (see library tutorial for details). "
+        "- Return books: Use the 24/7 Drop Box outside the library (see library tutorial). "
+        "- Overdue checks: Automated overdue emails are sent, or check via OPAC at https://libraryopac.bennett.edu.in/. "
+        "- Journal articles: Accessible 24/7 remotely at https://bennett.refread.com/#/home. "
+        "- Printing/Scanning: Available at the LRC from 9:00 AM to 5:30 PM. For laptop printing, email libraryhelpdesk@bennett.edu.in for official printouts or visit M-Block Library for other services. "
+        "- Alumni access: Alumni can access the LRC for reference. "
+        "- Book checkout limits: Refer to the library tutorial for details. "
+        "- Overdue fines: Pay via BU Payment Portal and update library staff. "
+        "- Book recommendations: Submit at https://docs.google.com/forms/d/e/1FAIpQLSeC0-LPlWvUbYBcN834Ct9kYdC9Oebutv5VWRcTujkzFgRjZw/viewform. "
+        "- Appeal fines: Contact libraryhelpdesk@bennett.edu.in or visit the HelpDesk. "
+        "- Download e-Books: Download chapters at https://bennett.refread.com/#/home. "
+        "- Inter Library Loan: Available via DELNET, contact library for details. "
+        "- Non-BU interns: Can use the library for reading only. "
+        "- Finding books on shelves: Search via OPAC; books have Call Numbers, and shelves are marked (see tutorial). "
+        "- Snacks in LRC: Not allowed, but water bottles are permitted. "
+        "- Drop Box issues: Confirm return via auto-generated email; if none, contact libraryhelpdesk@bennett.edu.in. "
+        "- Reserve a book: Use the 'Place Hold' feature in OPAC at https://libraryopac.bennett.edu.in/. "
+        "If the question is unrelated, politely redirect to library-related topics. "
         f"User question: {prompt}"
     )
     return {
@@ -60,6 +90,15 @@ def create_payload(prompt):
     }
 
 def call_gemini_api(payload):
+    """
+    Send the payload to Gemini API and handle the response.
+
+    Args:
+        payload (dict): Payload for Gemini API.
+
+    Returns:
+        str: Gemini API answer or error message.
+    """
     if not GEMINI_API_KEY:
         logging.error("Gemini API Key is missing.")
         return "Gemini API Key is missing. Please set it as a secret in Streamlit Cloud."
@@ -87,6 +126,7 @@ def call_gemini_api(payload):
     return answer
 
 def show_quick_actions():
+    """Display the row of quick action buttons."""
     quick_actions = [
         ("Find e-Resources", "https://bennett.refread.com/#/home"),
         ("Find Books", "https://libraryopac.bennett.edu.in/"),
@@ -100,26 +140,14 @@ def show_quick_actions():
         unsafe_allow_html=True
     )
 
-# --- Koha Book Search Function ---
-def search_koha_books(title):
-    url = f"{KOHA_API_URL}?title={title}"
-    try:
-        response = requests.get(url, auth=(KOHA_USERNAME, KOHA_PASSWORD), headers=KOHA_HEADERS, timeout=10)
-        if response.status_code == 200:
-            return response.json()
-        else:
-            st.error(f"API Error: {response.status_code}")
-            return []
-    except Exception as e:
-        st.error(f"Request failed: {e}")
-        return []
-
+# --- Session state for chat history ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
 def main():
     inject_custom_css()
 
+    # --- Header Section ---
     st.markdown("""
     <div class="profile-container">
         <img src="https://library.bennett.edu.in/wp-content/uploads/2024/05/WhatsApp-Image-2024-05-01-at-12.41.02-PM-e1714549052999-150x150.jpeg" 
@@ -131,53 +159,35 @@ def main():
 
     show_quick_actions()
 
+    # --- Welcome Message ---
     st.markdown("""
     <div style="text-align: center; margin: 2rem 0;">
         <p style="font-size: 1.1em;">Hello! I am Ashu, your AI assistant at Bennett University Library. How can I help you today?</p>
     </div>
     """, unsafe_allow_html=True)
 
-    # --- NEW SECTION: Koha Book Search ---
-    st.markdown("### 📚 Book Search (Koha Demo)")
-    st.markdown("Search for books in the <b>Koha Demo Library</b> by title (English):", unsafe_allow_html=True)
-    search_term = st.text_input("Enter book title, e.g. Python, History, Data Science, etc.")
-
-    if search_term:
-        with st.spinner("Searching Koha Demo Library..."):
-            books = search_koha_books(search_term)
-        if books and isinstance(books, list):
-            st.success(f"Found {len(books)} result(s) for '{search_term}':")
-            for book in books:
-                st.markdown(
-                    f"""
-                    <div style="padding:10px; margin:10px 0; border:1px solid #2e86c1; border-radius:16px; background:#f7fafc;">
-                    <b>Title:</b> {book.get('title', 'N/A')}<br>
-                    <b>Author:</b> {book.get('author', 'N/A')}<br>
-                    <b>Year:</b> {book.get('publication_year', 'N/A')}<br>
-                    <b>ISBN:</b> {book.get('isbn', 'N/A')}
-                    </div>
-                    """, unsafe_allow_html=True
-                )
-        else:
-            st.info("No books found for your search. Try another keyword.")
-
-    # --- Chatbot Section ---
+    # --- Chat History Display ---
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
+    # --- Chat Input at Bottom ---
     st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
     prompt = st.chat_input("Ask me about BU Library (e.g., 'What are the library hours?')")
 
     if prompt:
         st.session_state.messages.append({"role": "user", "content": prompt})
+
+        # --- Show a loading indicator while processing (for user experience) ---
         with st.spinner("Ashu is typing..."):
             payload = create_payload(prompt)
             answer = call_gemini_api(payload)
+
         st.session_state.messages.append({"role": "assistant", "content": answer})
         st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
+    # --- Fixed Footer ---
     st.markdown("""
     <div class="footer">
         <div style="margin: 0.5rem 0;">
