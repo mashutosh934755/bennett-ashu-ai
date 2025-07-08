@@ -3,19 +3,18 @@ import requests
 import os
 import logging
 
-# --- Logging ---
+# --- Logging Setup: Logs will be saved to app.log file for easy debugging ---
 logging.basicConfig(
     filename='app.log',
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# --- API Keys from Streamlit secrets or environment variables ---
+# --- API Configuration ---
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"] if "GEMINI_API_KEY" in st.secrets else os.getenv("GEMINI_API_KEY")
-GOOGLE_BOOKS_API_KEY = st.secrets["GOOGLE_BOOKS_API_KEY"] if "GOOGLE_BOOKS_API_KEY" in st.secrets else os.getenv("GOOGLE_BOOKS_API_KEY")
 GEMINI_API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent"
 
-# --- CSS Styles ---
+# --- CSS Styles: Stored as a variable for better readability & maintainability ---
 CSS_STYLES = """
 <style>
     :root { --header-color: #2e86c1; }
@@ -37,26 +36,23 @@ CSS_STYLES = """
 """
 
 def inject_custom_css():
+    """Inject custom CSS for app styling and responsive design."""
     st.markdown(CSS_STYLES, unsafe_allow_html=True)
 
 def create_quick_action_button(text, url):
+    """Create HTML for a styled quick action button."""
     return f'<a href="{url}" target="_blank" class="quick-action-btn">{text}</a>'
 
-def show_quick_actions():
-    quick_actions = [
-        ("Find e-Resources", "https://bennett.refread.com/#/home"),
-        ("Find Books", "https://libraryopac.bennett.edu.in/"),
-        ("Working Hours", "https://library.bennett.edu.in/index.php/working-hours/"),
-        ("Book GD Rooms", "http://10.6.0.121/gdroombooking/")
-    ]
-    st.markdown(
-        '<div class="quick-actions-row">' +
-        "".join([create_quick_action_button(t, u) for t, u in quick_actions]) +
-        '</div>',
-        unsafe_allow_html=True
-    )
-
 def create_payload(prompt):
+    """
+    Create a payload for the Gemini API request.
+
+    Args:
+        prompt (str): The user input prompt.
+
+    Returns:
+        dict: The payload object.
+    """
     system_instruction = (
         "You are Ashu, an AI assistant for Bennett University Library. "
         "Provide accurate and concise answers based on the following FAQ and library information. "
@@ -94,6 +90,15 @@ def create_payload(prompt):
     }
 
 def call_gemini_api(payload):
+    """
+    Send the payload to Gemini API and handle the response.
+
+    Args:
+        payload (dict): Payload for Gemini API.
+
+    Returns:
+        str: Gemini API answer or error message.
+    """
     if not GEMINI_API_KEY:
         logging.error("Gemini API Key is missing.")
         return "Gemini API Key is missing. Please set it as a secret in Streamlit Cloud."
@@ -120,44 +125,28 @@ def call_gemini_api(payload):
         logging.error(f"Network/API error: {e}")
     return answer
 
-def search_books_google(query, api_key):
-    url = "https://www.googleapis.com/books/v1/volumes"
-    params = {"q": query, "key": api_key}
-    try:
-        response = requests.get(url, params=params, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            books = []
-            for item in data.get("items", [])[:5]:
-                info = item.get("volumeInfo", {})
-                title = info.get("title", "No title")
-                authors = ", ".join(info.get("authors", []))
-                publisher = info.get("publisher", "N/A")
-                desc = info.get("description", "")
-                link = info.get("previewLink", "#")
-                cover = info.get("imageLinks", {}).get("thumbnail", "")
-                # Markdown formatting for better display in chat bubble
-                books.append(
-                    f"**{title}**\n"
-                    f"Author(s): {authors if authors else 'N/A'}\n"
-                    f"Publisher: {publisher}\n"
-                    + (f"![cover]({cover})\n" if cover else "")
-                    + (f"_{desc[:150]}..._\n" if desc else "")
-                    + f"[Preview Book]({link})"
-                )
-            if not books:
-                return "Sorry, no books found for your query."
-            return "\n\n---\n\n".join(books)
-        else:
-            return f"Google Books API error: {response.status_code}"
-    except Exception as e:
-        return f"An error occurred: {str(e)}"
+def show_quick_actions():
+    """Display the row of quick action buttons."""
+    quick_actions = [
+        ("Find e-Resources", "https://bennett.refread.com/#/home"),
+        ("Find Books", "https://libraryopac.bennett.edu.in/"),
+        ("Working Hours", "https://library.bennett.edu.in/index.php/working-hours/"),
+        ("Book GD Rooms", "http://10.6.0.121/gdroombooking/")
+    ]
+    st.markdown(
+        '<div class="quick-actions-row">' +
+        "".join([create_quick_action_button(t, u) for t, u in quick_actions]) +
+        '</div>',
+        unsafe_allow_html=True
+    )
 
+# --- Session state for chat history ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
 def main():
     inject_custom_css()
+
     # --- Header Section ---
     st.markdown("""
     <div class="profile-container">
@@ -184,20 +173,15 @@ def main():
 
     # --- Chat Input at Bottom ---
     st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
-    prompt = st.chat_input("Ask me about BU Library or search books (e.g., 'Find Python books')")
+    prompt = st.chat_input("Ask me about BU Library (e.g., 'What are the library hours?')")
 
     if prompt:
         st.session_state.messages.append({"role": "user", "content": prompt})
-        lower_prompt = prompt.lower()
-        book_keywords = ["find book", "search book", "ebook", "google book", "search books", "find books"]
-        matched = any(word in lower_prompt for word in book_keywords)
 
+        # --- Show a loading indicator while processing (for user experience) ---
         with st.spinner("Ashu is typing..."):
-            if matched and GOOGLE_BOOKS_API_KEY:
-                answer = search_books_google(prompt, GOOGLE_BOOKS_API_KEY)
-            else:
-                payload = create_payload(prompt)
-                answer = call_gemini_api(payload)
+            payload = create_payload(prompt)
+            answer = call_gemini_api(payload)
 
         st.session_state.messages.append({"role": "assistant", "content": answer})
         st.rerun()
