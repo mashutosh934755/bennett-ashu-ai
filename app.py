@@ -3,7 +3,7 @@ import requests
 import os
 import logging
 
-# --- Logging Setup ---
+# --- Logging ---
 logging.basicConfig(
     filename='app.log',
     level=logging.INFO,
@@ -132,11 +132,22 @@ def search_books_google(query, api_key):
                 info = item.get("volumeInfo", {})
                 title = info.get("title", "No title")
                 authors = ", ".join(info.get("authors", []))
+                publisher = info.get("publisher", "N/A")
+                desc = info.get("description", "")
                 link = info.get("previewLink", "#")
-                books.append(f"**{title}**\nAuthor(s): {authors}\n[Preview]({link})")
+                cover = info.get("imageLinks", {}).get("thumbnail", "")
+                # Markdown formatting for better display in chat bubble
+                books.append(
+                    f"**{title}**\n"
+                    f"Author(s): {authors if authors else 'N/A'}\n"
+                    f"Publisher: {publisher}\n"
+                    + (f"![cover]({cover})\n" if cover else "")
+                    + (f"_{desc[:150]}..._\n" if desc else "")
+                    + f"[Preview Book]({link})"
+                )
             if not books:
                 return "Sorry, no books found for your query."
-            return "\n\n".join(books)
+            return "\n\n---\n\n".join(books)
         else:
             return f"Google Books API error: {response.status_code}"
     except Exception as e:
