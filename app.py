@@ -3,20 +3,34 @@ import requests
 import os
 import logging
 
-# --- Logging Setup ---
+# Logging setup
 logging.basicConfig(
     filename='app.log',
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# --- API Configuration ---
+# Gemini API config
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"] if "GEMINI_API_KEY" in st.secrets else os.getenv("GEMINI_API_KEY")
 GEMINI_API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent"
-SP_API_BASE = "http://localhost/sp4.5.1/api"
+
+# SubjectsPlus API config
+SP_API_BASE = "http://localhost/sp4.5.1/api"  # Change if running on another host
 SP_API_KEY = "UJjJ2uHHxL5A1hOTzfIz"
 
-# --- CSS Styles ---
+# School/shortform mapping for queries
+shortform_map = {
+    "school of law": "LAW",
+    "law": "LAW",
+    "sol": "LAW",
+    "socet": "CET",
+    "soeas": "EAS",
+    "sod": "Design",
+    "soai": "(AI)",
+    "som": "manage"
+}
+
+# CSS Styles
 CSS_STYLES = """
 <style>
     :root { --header-color: #2e86c1; }
@@ -42,20 +56,6 @@ def inject_custom_css():
 
 def create_quick_action_button(text, url):
     return f'<a href="{url}" target="_blank" class="quick-action-btn">{text}</a>'
-
-def show_quick_actions():
-    quick_actions = [
-        ("Find e-Resources", "https://bennett.refread.com/#/home"),
-        ("Find Books", "https://libraryopac.bennett.edu.in/"),
-        ("Working Hours", "https://library.bennett.edu.in/index.php/working-hours/"),
-        ("Book GD Rooms", "http://10.6.0.121/gdroombooking/")
-    ]
-    st.markdown(
-        '<div class="quick-actions-row">' +
-        "".join([create_quick_action_button(t, u) for t, u in quick_actions]) +
-        '</div>',
-        unsafe_allow_html=True
-    )
 
 def create_payload(prompt):
     system_instruction = (
@@ -121,54 +121,46 @@ def call_gemini_api(payload):
         logging.error(f"Network/API error: {e}")
     return answer
 
-# ---- SubjectsPlus API Functions ----
-def fetch_subjectsplus_guides(guide_type="School", max_results=5):
-    url = f"{SP_API_BASE}/guides/type/{guide_type}/active/1/max/{max_results}/key/{SP_API_KEY}"
-    try:
-        resp = requests.get(url, timeout=10)
-        if resp.status_code == 200:
-            return resp.json().get("guide", [])
-    except Exception as e:
-        return []
-    return []
-
 def fetch_guide_by_shortform(shortform):
     url = f"{SP_API_BASE}/guides/shortform/{shortform}/key/{SP_API_KEY}"
     try:
         resp = requests.get(url, timeout=10)
         if resp.status_code == 200:
-            return resp.json().get("guide", [])
+            guides = resp.json().get("guide", [])
+            return guides
+        else:
+            return []
     except Exception as e:
         return []
-    return []
 
-# ---- Query Matching Logic ----
 def detect_and_fetch_guides(prompt):
-    prompt_lower = prompt.lower()
-    # Update this mapping as per your library's shortforms and guides!
-    shortform_map = {
-        "school of law": "LAW",
-        "law": "LAW",
-        "sol": "LAW",
-        "socet": "CET",
-        "school of ai": "(AI)",
-        "soai": "(AI)",
-        "sod": "Design",
-        "soeas": "EAS",
-        "cloud computing": "Cloud Computing",
-        # Add more shortforms/labels if needed!
-    }
-    for key, val in shortform_map.items():
-        if key in prompt_lower:
-            return fetch_guide_by_shortform(val)
-    # fallback: type-based search
-    if "school" in prompt_lower:
-        return fetch_subjectsplus_guides(guide_type="School", max_results=5)
-    elif "topic" in prompt_lower:
-        return fetch_subjectsplus_guides(guide_type="Topic", max_results=5)
-    elif "guide" in prompt_lower:
-        return fetch_subjectsplus_guides(max_results=5)
-    return []
+    # Try to fetch guides if prompt matches mapped shortforms
+    prompt_lc = prompt.lower().strip()
+    results = []
+    for key, shortform in shortform_map.items():
+        if key in prompt_lc:
+            guides = fetch_guide_by_shortform(shortform)
+            if guides:
+                results.extend(guides)
+    return results
+
+def show_quick_actions():
+    quick_actions = [
+        ("Find e-Resources", "https://bennett.refread.com/#/home"),
+        ("Find Books", "https://libraryopac.bennett.edu.in/"),
+        ("Working Hours", "https://library.bennett.edu.in/index.php/working-hours/"),
+        ("Book GD Rooms", "http://10.6.0.121/gdroombooking/")
+    ]
+    st.markdown(
+        '<div class="quick-actions-row">' +
+        "".join([create_quick_action_button(t, u) for t, u in quick_actions]) +
+        '</div>',
+        unsafe_allow_html=True
+    )
+
+# --- Session state for chat history ---
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
 def main():
     inject_custom_css()
@@ -192,13 +184,10 @@ def main():
     </div>
     """, unsafe_allow_html=True)
 
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-
     # --- Chat History Display ---
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
-            st.markdown(message["content"], unsafe_allow_html=True)
+            st.markdown(message["content"])
 
     # --- Chat Input at Bottom ---
     st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
@@ -210,7 +199,7 @@ def main():
         if guides:
             reply = "Here are the guides matching your query:\n\n"
             for guide in guides:
-                reply += f"- [{guide['title']} ({guide['shortform']})]({guide['url']})\n"
+                reply += f"- [{guide['title'].strip()} ({guide['shortform']})]({guide['url']})\n"
         elif "guide" in prompt.lower():
             reply = "No guides found for your query. Try searching with the exact name or ask about a specific school, topic, or subject."
         else:
