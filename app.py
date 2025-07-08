@@ -3,55 +3,18 @@ import requests
 import os
 import logging
 
-# -------- Logging Setup --------
+# --- Logging Setup: Logs will be saved to app.log file for easy debugging ---
 logging.basicConfig(
     filename='app.log',
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# -------- API Configuration --------
+# --- API Configuration ---
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"] if "GEMINI_API_KEY" in st.secrets else os.getenv("GEMINI_API_KEY")
 GEMINI_API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent"
 
-# -------- SubjectsPlus Integration --------
-SP_API_BASE = "http://localhost/sp4.5.1/api"   # Change to server if deployed
-SP_API_KEY = "UJjJ2uHHxL5A1hOTzfIz"
-
-shortform_map = {
-    "school of law": "LAW",
-    "law": "LAW",
-    "sol": "LAW",
-    "so l": "LAW",
-    "s.o.l": "LAW",
-    # Add more if needed
-}
-
-def fetch_guide_by_shortform(shortform):
-    url = f"{SP_API_BASE}/guides/shortform/{shortform}/key/{SP_API_KEY}"
-    try:
-        resp = requests.get(url, timeout=10)
-        if resp.status_code == 200:
-            guides = resp.json().get("guide", [])
-            return guides
-    except Exception:
-        return []
-    return []
-
-def detect_and_fetch_guides(prompt):
-    prompt_lc = prompt.lower()
-    # Try mapping with common keys
-    for key, shortform in shortform_map.items():
-        if key in prompt_lc.replace("  ", " "):
-            return fetch_guide_by_shortform(shortform)
-    # Token-wise fallback (so that "law" or "sol" by itself works)
-    tokens = prompt_lc.replace(".", " ").replace(",", " ").split()
-    for t in tokens:
-        if t in ["law", "sol"]:
-            return fetch_guide_by_shortform("LAW")
-    return []
-
-# -------- CSS Styles --------
+# --- CSS Styles: Stored as a variable for better readability & maintainability ---
 CSS_STYLES = """
 <style>
     :root { --header-color: #2e86c1; }
@@ -73,12 +36,23 @@ CSS_STYLES = """
 """
 
 def inject_custom_css():
+    """Inject custom CSS for app styling and responsive design."""
     st.markdown(CSS_STYLES, unsafe_allow_html=True)
 
 def create_quick_action_button(text, url):
+    """Create HTML for a styled quick action button."""
     return f'<a href="{url}" target="_blank" class="quick-action-btn">{text}</a>'
 
 def create_payload(prompt):
+    """
+    Create a payload for the Gemini API request.
+
+    Args:
+        prompt (str): The user input prompt.
+
+    Returns:
+        dict: The payload object.
+    """
     system_instruction = (
         "You are Ashu, an AI assistant for Bennett University Library. "
         "Provide accurate and concise answers based on the following FAQ and library information. "
@@ -116,6 +90,15 @@ def create_payload(prompt):
     }
 
 def call_gemini_api(payload):
+    """
+    Send the payload to Gemini API and handle the response.
+
+    Args:
+        payload (dict): Payload for Gemini API.
+
+    Returns:
+        str: Gemini API answer or error message.
+    """
     if not GEMINI_API_KEY:
         logging.error("Gemini API Key is missing.")
         return "Gemini API Key is missing. Please set it as a secret in Streamlit Cloud."
@@ -143,6 +126,7 @@ def call_gemini_api(payload):
     return answer
 
 def show_quick_actions():
+    """Display the row of quick action buttons."""
     quick_actions = [
         ("Find e-Resources", "https://bennett.refread.com/#/home"),
         ("Find Books", "https://libraryopac.bennett.edu.in/"),
@@ -163,7 +147,7 @@ if "messages" not in st.session_state:
 def main():
     inject_custom_css()
 
-    # Header
+    # --- Header Section ---
     st.markdown("""
     <div class="profile-container">
         <img src="https://library.bennett.edu.in/wp-content/uploads/2024/05/WhatsApp-Image-2024-05-01-at-12.41.02-PM-e1714549052999-150x150.jpeg" 
@@ -175,42 +159,35 @@ def main():
 
     show_quick_actions()
 
-    # Welcome Message
+    # --- Welcome Message ---
     st.markdown("""
     <div style="text-align: center; margin: 2rem 0;">
         <p style="font-size: 1.1em;">Hello! I am Ashu, your AI assistant at Bennett University Library. How can I help you today?</p>
     </div>
     """, unsafe_allow_html=True)
 
-    # Chat history
+    # --- Chat History Display ---
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    # Static chat input at bottom
+    # --- Chat Input at Bottom ---
     st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
-    prompt = st.chat_input("Ask me about BU Library (e.g., 'What are the library hours?' or 'school of law')")
+    prompt = st.chat_input("Ask me about BU Library (e.g., 'What are the library hours?')")
 
     if prompt:
         st.session_state.messages.append({"role": "user", "content": prompt})
 
-        # ---------- Try SubjectsPlus guide detection first ----------
-        guides = detect_and_fetch_guides(prompt)
-        if guides:
-            reply = "Here are the guides matching your query:\n\n"
-            for guide in guides:
-                reply += f"- [{guide['title'].strip()} ({guide['shortform']})]({guide['url']})\n"
-            st.session_state.messages.append({"role": "assistant", "content": reply})
-            st.rerun()
-        else:
-            with st.spinner("Ashu is typing..."):
-                payload = create_payload(prompt)
-                answer = call_gemini_api(payload)
-            st.session_state.messages.append({"role": "assistant", "content": answer})
-            st.rerun()
+        # --- Show a loading indicator while processing (for user experience) ---
+        with st.spinner("Ashu is typing..."):
+            payload = create_payload(prompt)
+            answer = call_gemini_api(payload)
+
+        st.session_state.messages.append({"role": "assistant", "content": answer})
+        st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # Footer
+    # --- Fixed Footer ---
     st.markdown("""
     <div class="footer">
         <div style="margin: 0.5rem 0;">
