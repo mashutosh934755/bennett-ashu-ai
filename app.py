@@ -3,21 +3,55 @@ import requests
 import os
 import logging
 
-# ----------- CONFIG ------------
-SP_API_BASE = "http://localhost/sp4.5.1/api"
-SP_API_KEY = "UJjJ2uHHxL5A1hOTzfIz"
+# -------- Logging Setup --------
+logging.basicConfig(
+    filename='app.log',
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
+# -------- API Configuration --------
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"] if "GEMINI_API_KEY" in st.secrets else os.getenv("GEMINI_API_KEY")
 GEMINI_API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent"
+
+# -------- SubjectsPlus Integration --------
+SP_API_BASE = "http://localhost/sp4.5.1/api"   # Change to server if deployed
+SP_API_KEY = "UJjJ2uHHxL5A1hOTzfIz"
 
 shortform_map = {
     "school of law": "LAW",
     "law": "LAW",
     "sol": "LAW",
-    # aur schools yahan add kar lo
+    "so l": "LAW",
+    "s.o.l": "LAW",
+    # Add more if needed
 }
 
-# ----------- CSS ------------
+def fetch_guide_by_shortform(shortform):
+    url = f"{SP_API_BASE}/guides/shortform/{shortform}/key/{SP_API_KEY}"
+    try:
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 200:
+            guides = resp.json().get("guide", [])
+            return guides
+    except Exception:
+        return []
+    return []
+
+def detect_and_fetch_guides(prompt):
+    prompt_lc = prompt.lower()
+    # Try mapping with common keys
+    for key, shortform in shortform_map.items():
+        if key in prompt_lc.replace("  ", " "):
+            return fetch_guide_by_shortform(shortform)
+    # Token-wise fallback (so that "law" or "sol" by itself works)
+    tokens = prompt_lc.replace(".", " ").replace(",", " ").split()
+    for t in tokens:
+        if t in ["law", "sol"]:
+            return fetch_guide_by_shortform("LAW")
+    return []
+
+# -------- CSS Styles --------
 CSS_STYLES = """
 <style>
     :root { --header-color: #2e86c1; }
@@ -44,40 +78,6 @@ def inject_custom_css():
 def create_quick_action_button(text, url):
     return f'<a href="{url}" target="_blank" class="quick-action-btn">{text}</a>'
 
-def show_quick_actions():
-    quick_actions = [
-        ("Find e-Resources", "https://bennett.refread.com/#/home"),
-        ("Find Books", "https://libraryopac.bennett.edu.in/"),
-        ("Working Hours", "https://library.bennett.edu.in/index.php/working-hours/"),
-        ("Book GD Rooms", "http://10.6.0.121/gdroombooking/")
-    ]
-    st.markdown(
-        '<div class="quick-actions-row">' +
-        "".join([create_quick_action_button(t, u) for t, u in quick_actions]) +
-        '</div>',
-        unsafe_allow_html=True
-    )
-
-# --------- SubjectsPlus Helper -------------
-def fetch_guide_by_shortform(shortform):
-    url = f"{SP_API_BASE}/guides/shortform/{shortform}/key/{SP_API_KEY}"
-    try:
-        resp = requests.get(url, timeout=10)
-        if resp.status_code == 200:
-            guides = resp.json().get("guide", [])
-            return guides
-    except Exception:
-        return []
-    return []
-
-def detect_and_fetch_guides(prompt):
-    prompt_lc = prompt.strip().lower()
-    for key, shortform in shortform_map.items():
-        if key in prompt_lc:
-            return fetch_guide_by_shortform(shortform)
-    return []
-
-# -------- Gemini API integration -----------
 def create_payload(prompt):
     system_instruction = (
         "You are Ashu, an AI assistant for Bennett University Library. "
@@ -117,6 +117,7 @@ def create_payload(prompt):
 
 def call_gemini_api(payload):
     if not GEMINI_API_KEY:
+        logging.error("Gemini API Key is missing.")
         return "Gemini API Key is missing. Please set it as a secret in Streamlit Cloud."
     try:
         response = requests.post(
@@ -129,19 +130,36 @@ def call_gemini_api(payload):
             try:
                 candidates = response.json().get("candidates", [{}])
                 answer = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "No answer found.")
-            except Exception:
+                logging.info("Gemini API success: %s", answer[:100])
+            except Exception as e:
+                logging.error(f"Error parsing response: {e}")
                 answer = "An error occurred while processing your request."
         else:
             answer = f"Connection error: {response.status_code} - {response.text}"
-    except requests.RequestException:
+            logging.error(answer)
+    except requests.RequestException as e:
         answer = "A network error occurred. Please try again later."
+        logging.error(f"Network/API error: {e}")
     return answer
 
-# ---- Streamlit Session State -----
+def show_quick_actions():
+    quick_actions = [
+        ("Find e-Resources", "https://bennett.refread.com/#/home"),
+        ("Find Books", "https://libraryopac.bennett.edu.in/"),
+        ("Working Hours", "https://library.bennett.edu.in/index.php/working-hours/"),
+        ("Book GD Rooms", "http://10.6.0.121/gdroombooking/")
+    ]
+    st.markdown(
+        '<div class="quick-actions-row">' +
+        "".join([create_quick_action_button(t, u) for t, u in quick_actions]) +
+        '</div>',
+        unsafe_allow_html=True
+    )
+
+# --- Session state for chat history ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# ---------- MAIN APP --------------
 def main():
     inject_custom_css()
 
@@ -157,25 +175,26 @@ def main():
 
     show_quick_actions()
 
+    # Welcome Message
     st.markdown("""
     <div style="text-align: center; margin: 2rem 0;">
         <p style="font-size: 1.1em;">Hello! I am Ashu, your AI assistant at Bennett University Library. How can I help you today?</p>
     </div>
     """, unsafe_allow_html=True)
 
-    # Show messages
+    # Chat history
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    # Chat Input
+    # Static chat input at bottom
     st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
     prompt = st.chat_input("Ask me about BU Library (e.g., 'What are the library hours?' or 'school of law')")
 
     if prompt:
         st.session_state.messages.append({"role": "user", "content": prompt})
 
-        # --------- Try guide detection before Gemini -----------
+        # ---------- Try SubjectsPlus guide detection first ----------
         guides = detect_and_fetch_guides(prompt)
         if guides:
             reply = "Here are the guides matching your query:\n\n"
@@ -191,6 +210,7 @@ def main():
             st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
+    # Footer
     st.markdown("""
     <div class="footer">
         <div style="margin: 0.5rem 0;">
