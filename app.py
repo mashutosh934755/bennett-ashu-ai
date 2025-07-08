@@ -3,18 +3,18 @@ import requests
 import os
 import logging
 
-# --- Logging Setup: Logs will be saved to app.log file for easy debugging ---
+# --- Logging Setup ---
 logging.basicConfig(
     filename='app.log',
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# --- API Configuration ---
+# --- API Configuration (Update: Gemini 2.0-flash + new key header) ---
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"] if "GEMINI_API_KEY" in st.secrets else os.getenv("GEMINI_API_KEY")
-GEMINI_API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent"
+GEMINI_API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 
-# --- CSS Styles: Stored as a variable for better readability & maintainability ---
+# --- CSS Styles ---
 CSS_STYLES = """
 <style>
     :root { --header-color: #2e86c1; }
@@ -36,23 +36,12 @@ CSS_STYLES = """
 """
 
 def inject_custom_css():
-    """Inject custom CSS for app styling and responsive design."""
     st.markdown(CSS_STYLES, unsafe_allow_html=True)
 
 def create_quick_action_button(text, url):
-    """Create HTML for a styled quick action button."""
     return f'<a href="{url}" target="_blank" class="quick-action-btn">{text}</a>'
 
 def create_payload(prompt):
-    """
-    Create a payload for the Gemini API request.
-
-    Args:
-        prompt (str): The user input prompt.
-
-    Returns:
-        dict: The payload object.
-    """
     system_instruction = (
         "You are Ashu, an AI assistant for Bennett University Library. "
         "Provide accurate and concise answers based on the following FAQ and library information. "
@@ -89,24 +78,18 @@ def create_payload(prompt):
         ]
     }
 
-def call_gemini_api(payload):
-    """
-    Send the payload to Gemini API and handle the response.
-
-    Args:
-        payload (dict): Payload for Gemini API.
-
-    Returns:
-        str: Gemini API answer or error message.
-    """
+def call_gemini_api_v2(payload):
     if not GEMINI_API_KEY:
         logging.error("Gemini API Key is missing.")
         return "Gemini API Key is missing. Please set it as a secret in Streamlit Cloud."
     try:
         response = requests.post(
-            f"{GEMINI_API_ENDPOINT}?key={GEMINI_API_KEY}",
+            GEMINI_API_ENDPOINT,
             json=payload,
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "X-goog-api-key": GEMINI_API_KEY
+            },
             timeout=15
         )
         if response.status_code == 200:
@@ -126,7 +109,6 @@ def call_gemini_api(payload):
     return answer
 
 def show_quick_actions():
-    """Display the row of quick action buttons."""
     quick_actions = [
         ("Find e-Resources", "https://bennett.refread.com/#/home"),
         ("Find Books", "https://libraryopac.bennett.edu.in/"),
@@ -178,10 +160,10 @@ def main():
     if prompt:
         st.session_state.messages.append({"role": "user", "content": prompt})
 
-        # --- Show a loading indicator while processing (for user experience) ---
+        # --- Show a loading indicator while processing ---
         with st.spinner("Ashu is typing..."):
             payload = create_payload(prompt)
-            answer = call_gemini_api(payload)
+            answer = call_gemini_api_v2(payload)
 
         st.session_state.messages.append({"role": "assistant", "content": answer})
         st.rerun()
