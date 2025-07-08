@@ -11,10 +11,8 @@ logging.basicConfig(
 )
 
 # --- API Configuration ---
-# Gemini
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"] if "GEMINI_API_KEY" in st.secrets else os.getenv("GEMINI_API_KEY")
 GEMINI_API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent"
-# SubjectsPlus
 SP_API_BASE = "http://localhost/sp4.5.1/api"
 SP_API_KEY = "UJjJ2uHHxL5A1hOTzfIz"
 
@@ -60,7 +58,6 @@ def show_quick_actions():
     )
 
 def create_payload(prompt):
-    # (Gemini AI prompt logic – same as your code)
     system_instruction = (
         "You are Ashu, an AI assistant for Bennett University Library. "
         "Provide accurate and concise answers based on the following FAQ and library information. "
@@ -124,34 +121,59 @@ def call_gemini_api(payload):
         logging.error(f"Network/API error: {e}")
     return answer
 
-# -------- SubjectsPlus API function --------
+# ---- SubjectsPlus API Functions ----
 def fetch_subjectsplus_guides(guide_type="School", max_results=5):
     url = f"{SP_API_BASE}/guides/type/{guide_type}/active/1/max/{max_results}/key/{SP_API_KEY}"
     try:
         resp = requests.get(url, timeout=10)
         if resp.status_code == 200:
             return resp.json().get("guide", [])
-        else:
-            return []
     except Exception as e:
         return []
+    return []
 
-# -------- User query matching (simple rule-based) --------
-def detect_subjectsplus_query(prompt):
-    # Feel free to enhance rules (regex, NLP, etc.)
-    keywords = [
-        "school guide", "socet", "design", "soai", "soeas", "sod", "sot", "law", "cloud computing"
-    ]
+def fetch_guide_by_shortform(shortform):
+    url = f"{SP_API_BASE}/guides/shortform/{shortform}/key/{SP_API_KEY}"
+    try:
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 200:
+            return resp.json().get("guide", [])
+    except Exception as e:
+        return []
+    return []
+
+# ---- Query Matching Logic ----
+def detect_and_fetch_guides(prompt):
     prompt_lower = prompt.lower()
-    for key in keywords:
+    # Update this mapping as per your library's shortforms and guides!
+    shortform_map = {
+        "school of law": "LAW",
+        "law": "LAW",
+        "sol": "LAW",
+        "socet": "CET",
+        "school of ai": "(AI)",
+        "soai": "(AI)",
+        "sod": "Design",
+        "soeas": "EAS",
+        "cloud computing": "Cloud Computing",
+        # Add more shortforms/labels if needed!
+    }
+    for key, val in shortform_map.items():
         if key in prompt_lower:
-            return True
-    return False
+            return fetch_guide_by_shortform(val)
+    # fallback: type-based search
+    if "school" in prompt_lower:
+        return fetch_subjectsplus_guides(guide_type="School", max_results=5)
+    elif "topic" in prompt_lower:
+        return fetch_subjectsplus_guides(guide_type="Topic", max_results=5)
+    elif "guide" in prompt_lower:
+        return fetch_subjectsplus_guides(max_results=5)
+    return []
 
 def main():
     inject_custom_css()
 
-    # --- Header ---
+    # --- Header Section ---
     st.markdown("""
     <div class="profile-container">
         <img src="https://library.bennett.edu.in/wp-content/uploads/2024/05/WhatsApp-Image-2024-05-01-at-12.41.02-PM-e1714549052999-150x150.jpeg" 
@@ -170,7 +192,6 @@ def main():
     </div>
     """, unsafe_allow_html=True)
 
-    # --- Chat Session State ---
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
@@ -181,29 +202,22 @@ def main():
 
     # --- Chat Input at Bottom ---
     st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
-    prompt = st.chat_input("Ask me about BU Library (e.g., 'What are the library hours?' or 'school guides')")
+    prompt = st.chat_input("Ask me about BU Library (e.g., 'What are the library hours?' or 'school of law', 'socet')")
 
     if prompt:
         st.session_state.messages.append({"role": "user", "content": prompt})
-
-        # --- Smart switch: SubjectsPlus API OR Gemini AI ---
-        reply = ""
-        if detect_subjectsplus_query(prompt):
-            # You can enhance this: detect which guide type/shortform, etc.
-            guides = fetch_subjectsplus_guides(guide_type="School", max_results=5)
-            if guides:
-                reply = "Here are the available School Guides:\n\n"
-                for guide in guides:
-                    reply += f"- [{guide['title']} ({guide['shortform']})]({guide['url']})\n"
-            else:
-                reply = "No School Guides found at the moment."
-            st.session_state.messages.append({"role": "assistant", "content": reply})
+        guides = detect_and_fetch_guides(prompt)
+        if guides:
+            reply = "Here are the guides matching your query:\n\n"
+            for guide in guides:
+                reply += f"- [{guide['title']} ({guide['shortform']})]({guide['url']})\n"
+        elif "guide" in prompt.lower():
+            reply = "No guides found for your query. Try searching with the exact name or ask about a specific school, topic, or subject."
         else:
             with st.spinner("Ashu is typing..."):
                 payload = create_payload(prompt)
-                answer = call_gemini_api(payload)
-            st.session_state.messages.append({"role": "assistant", "content": answer})
-
+                reply = call_gemini_api(payload)
+        st.session_state.messages.append({"role": "assistant", "content": reply})
         st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
