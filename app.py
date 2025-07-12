@@ -3,14 +3,6 @@ import requests
 import os
 import logging
 
-st.set_page_config(
-    page_title="Ashu AI @ BU Library",
-    page_icon="https://play-lh.googleusercontent.com/kCXMe_CDJaLcEb_Ax8hoSo9kfqOmeB7VoB4zNI5dCSAD8QSeNZE1Eow4NBXx-NjTDQ",
-    layout="centered",
-    initial_sidebar_state="collapsed"
-)
-
-
 # --- Logging Setup ---
 logging.basicConfig(
     filename='app.log',
