@@ -250,7 +250,7 @@ def main():
             st.markdown(message["content"])
 
     st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
-    prompt = st.chat_input("Ask anything: e.g. 'How can I borrow books?', 'Find research articles on AI', 'article on Python', 'papers about ML'")
+    prompt = st.chat_input("Ask your library question…")
 
     if prompt:
         st.session_state.messages.append({"role": "user", "content": prompt})
