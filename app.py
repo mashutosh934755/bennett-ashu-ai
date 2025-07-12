@@ -2,7 +2,7 @@ import streamlit as st
 import requests
 import os
 import logging
-import re
+import re  # ← Don't forget!
 
 # --- Logging Setup ---
 logging.basicConfig(
@@ -127,12 +127,55 @@ def core_article_search(query, limit=20):
     except Exception as e:
         return []
 
+# --- New: More flexible Hindi/English intent detection + topic extraction ---
+def is_core_query(prompt):
+    """Detect if prompt is for CORE and try to extract topic."""
+    keywords = [
+        "find research paper", "find research papers", "research articles", "open access article",
+        "find papers on", "journal article", "download article", "open access paper",
+        "article on", "papers on", "journal on",
+        "article", "research paper", "journal", "papers"
+    ]
+    prompt_lower = prompt.lower()
+    topic = None
+    for kw in keywords:
+        if kw in prompt_lower:
+            # Try to extract after "on", "par", "ke bare mein", "about" etc.
+            # E.g., "article on AI", "article do AI par", "mujhe python par article chahiye"
+            topic_match = re.search(r"(?:on|par|about|ke bare mein)\s+([a-zA-Z0-9\- ]+)", prompt_lower)
+            if topic_match:
+                topic = topic_match.group(1)
+                break
+            # Hindi/English mixed: "article do AI par", "journal dijiye ML ke bare mein"
+            topic_match2 = re.search(r"(?:article|journal|paper|papers|research paper)[\w\s]*([a-zA-Z0-9\- ]+)\s*(?:par|on|about|ke bare mein)", prompt_lower)
+            if topic_match2:
+                topic = topic_match2.group(1)
+                break
+            # Simpler: "AI article", "ML ke bare mein journal chahiye"
+            topic_match3 = re.search(r"([a-zA-Z0-9\- ]+)\s*(?:article|journal|paper|papers|research paper)", prompt_lower)
+            if topic_match3:
+                topic = topic_match3.group(1)
+                break
+            # Last fallback, take last word (works for "mujhe ai par article chahiye")
+            words = prompt_lower.strip().split()
+            if len(words) > 1:
+                topic = words[-2] if words[-1] in ["par", "on", "about"] else words[-1]
+            else:
+                topic = prompt_lower
+            break
+    return (bool(topic), topic)
+
+def clean_topic(topic):
+    topic = topic.strip()
+    topic = re.sub(r"\b(do|dijiye|chahiye|de do|ka|ke|ki|par|on|about|ke upar|ke bare mein)\b", "", topic, flags=re.IGNORECASE)
+    topic = re.sub(r"\s+", " ", topic)
+    return topic.strip()
+
 def expand_query(q):
     expansions = {
         "ai": "artificial intelligence",
         "ml": "machine learning",
-        "dl": "deep learning",
-        "ds": "data science"
+        "dl": "deep learning"
     }
     lower = q.strip().lower()
     if lower in expansions:
@@ -142,46 +185,16 @@ def expand_query(q):
             return lower.replace(short, full)
     return q
 
-def is_core_query(prompt):
-    """
-    Detects if the user's prompt looks like a research/article/paper query.
-    Returns (bool, topic) -- topic extracted if possible.
-    """
-    prompt_lower = prompt.lower()
-    # Keywords for query detection
-    keywords = ["article", "research", "journal", "paper", "open access"]
-    found_kw = any(kw in prompt_lower for kw in keywords)
-
-    # Try multiple regex patterns for Hindi-English mix
-    patterns = [
-        r'(?:article|paper|journal|research)(?:s)?\s*(?:on|about|ke upar|ke bare mein|par)?\s*([a-zA-Z0-9\s\-]+)',
-        r'(?:mujhe|i want|chahiye|dijiye)?\s*([a-zA-Z0-9\s\-]+)\s*(?:par|ke upar|ke bare mein)?\s*(?:article|paper|journal|research)'
-    ]
-    topic = ""
-    for pat in patterns:
-        match = re.search(pat, prompt_lower)
-        if match:
-            topic = match.group(1).strip()
-            break
-
-    # Fallback for "open access" + topic
-    if not topic:
-        match2 = re.search(r'(?:open access).*?(ai|python|ml|machine learning|deep learning|data science)', prompt_lower)
-        if match2:
-            found_kw = True
-            topic = match2.group(1)
-    return found_kw and topic != "", topic.strip()
-
 def handle_user_query(prompt):
     is_core, topic = is_core_query(prompt)
     if is_core and topic:
+        topic = clean_topic(topic)
         topic = expand_query(topic)
         answer = (
             f"You can also find journal articles and e-books on '**{topic.title()}**' 24/7 at Bennett University e-Resources platform: [Refread](https://bennett.refread.com/#/home).\n\n"
             "Here are some latest open access research articles:\n\n"
         )
         results = core_article_search(topic, limit=20)
-        # Sort by createdDate desc and top 10
         results = sorted(results, key=lambda x: x.get("createdDate", ""), reverse=True)[:10]
         if not results:
             answer += (
@@ -255,7 +268,6 @@ def main():
             st.markdown(message["content"])
 
     st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
-    # Professional prompt for search box
     prompt = st.chat_input("Type your query about books, research papers, journals, library services...")
 
     if prompt:
