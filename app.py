@@ -3,7 +3,7 @@ import requests
 import os
 import logging
 import re
-import feedparser  # For arXiv
+import feedparser  # pip install feedparser
 
 st.set_page_config(
     page_title="Ashu AI @ BU Library",
@@ -24,7 +24,6 @@ CORE_API_KEY = st.secrets.get("CORE_API_KEY", os.getenv("CORE_API_KEY"))
 GEMINI_API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 CORE_API_ENDPOINT = "https://api.core.ac.uk/v3/search/works"
 
-# --- CSS ---
 CSS_STYLES = """
 <style>
     :root { --header-color: #2e86c1; }
@@ -50,7 +49,36 @@ def inject_custom_css():
 def create_quick_action_button(text, url):
     return f'<a href="{url}" target="_blank" class="quick-action-btn">{text}</a>'
 
-# ---------- API functions for research discovery ----------
+# -------------- Article APIs --------------
+def core_article_search(query, limit=5):
+    if not CORE_API_KEY:
+        return []
+    url = f"{CORE_API_ENDPOINT}"
+    headers = {"Authorization": f"Bearer {CORE_API_KEY}"}
+    params = {"q": query, "limit": limit}
+    try:
+        r = requests.get(url, headers=headers, params=params, timeout=15)
+        if r.status_code == 200:
+            return r.json()["results"]
+        else:
+            return []
+    except Exception:
+        return []
+
+def arxiv_article_search(query, limit=5):
+    url = f"http://export.arxiv.org/api/query?search_query=all:{query}&start=0&max_results={limit}"
+    try:
+        feed = feedparser.parse(url)
+        result = []
+        for entry in feed.entries:
+            title = entry.title
+            pdf_links = [l.href for l in entry.links if l.type == "application/pdf"]
+            link = pdf_links[0] if pdf_links else entry.link
+            year = entry.published[:4]
+            result.append({"title": title, "url": link, "year": year})
+        return result
+    except Exception:
+        return []
 
 def doaj_article_search(query, limit=5):
     url = f"https://doaj.org/api/search/articles/title:{query}"
@@ -70,7 +98,7 @@ def doaj_article_search(query, limit=5):
             return result
         else:
             return []
-    except Exception as e:
+    except Exception:
         return []
 
 def datacite_article_search(query, limit=5):
@@ -90,27 +118,10 @@ def datacite_article_search(query, limit=5):
             return result
         else:
             return []
-    except Exception as e:
+    except Exception:
         return []
 
-def arxiv_article_search(query, limit=5):
-    url = f"http://export.arxiv.org/api/query?search_query=all:{query}&start=0&max_results={limit}"
-    try:
-        feed = feedparser.parse(url)
-        result = []
-        for entry in feed.entries:
-            title = entry.title
-            summary = entry.summary
-            pdf_links = [l.href for l in entry.links if l.type == "application/pdf"]
-            link = pdf_links[0] if pdf_links else entry.link
-            year = entry.published[:4]
-            result.append({"title": title, "url": link, "journal": "arXiv", "year": year, "summary": summary})
-        return result
-    except Exception as e:
-        return []
-
-# ---------- Existing CORE & Gemini API functions ----------
-
+# -------------- Gemini fallback --------------
 def create_payload(prompt):
     system_instruction = (
         "You are Ashu, an AI assistant for Bennett University Library. "
@@ -178,157 +189,22 @@ def call_gemini_api_v2(payload):
         logging.error(f"Network/API error: {e}")
     return answer
 
-def core_article_search(query, limit=5):
-    if not CORE_API_KEY:
-        return []
-    url = f"{CORE_API_ENDPOINT}"
-    headers = {"Authorization": f"Bearer {CORE_API_KEY}"}
-    params = {"q": query, "limit": limit}
-    try:
-        r = requests.get(url, headers=headers, params=params, timeout=15)
-        if r.status_code == 200:
-            return r.json()["results"]
-        else:
-            return []
-    except Exception as e:
-        return []
+# -------------- Topic Extraction (Hindi/English both) --------------
+def get_topic_from_prompt(prompt):
+    # Hindi/English topic extraction
+    pattern = r"(?:on|par|about|ke bare mein|पर|के बारे में|का|की)\s+([a-zA-Z0-9\-अ-ह ]+)"
+    match = re.search(pattern, prompt, re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    # Fallback: last word
+    words = prompt.strip().split()
+    if len(words) > 1:
+        return words[-2] if words[-1].lower() in ["articles", "पर", "on"] else words[-1]
+    return prompt.strip()
 
-# ---------- Intent Detection ----------
-
-def is_arxiv_query(prompt):
-    for kw in ["arxiv", "preprint", "preprints"]:
-        if kw in prompt.lower():
-            return True
-    return False
-
-def is_doaj_query(prompt):
-    for kw in ["doaj", "open access journal", "open access article"]:
-        if kw in prompt.lower():
-            return True
-    return False
-
-def is_datacite_query(prompt):
-    for kw in ["dataset", "datacite", "research data"]:
-        if kw in prompt.lower():
-            return True
-    return False
-
-# --- CORE style (your code) ---
-def is_core_query(prompt):
-    keywords = [
-        "find research paper", "find research papers", "research articles", "open access article",
-        "find papers on", "journal article", "download article", "open access paper",
-        "article on", "papers on", "journal on",
-        "article", "research paper", "journal", "papers"
-    ]
-    prompt_lower = prompt.lower()
-    topic = None
-    for kw in keywords:
-        if kw in prompt_lower:
-            topic_match = re.search(r"(?:on|par|about|ke bare mein)\s+([a-zA-Z0-9\- ]+)", prompt_lower)
-            if topic_match:
-                topic = topic_match.group(1)
-                break
-            topic_match2 = re.search(r"(?:article|journal|paper|papers|research paper)[\w\s]*([a-zA-Z0-9\- ]+)\s*(?:par|on|about|ke bare mein)", prompt_lower)
-            if topic_match2:
-                topic = topic_match2.group(1)
-                break
-            topic_match3 = re.search(r"([a-zA-Z0-9\- ]+)\s*(?:article|journal|paper|papers|research paper)", prompt_lower)
-            if topic_match3:
-                topic = topic_match3.group(1)
-                break
-            words = prompt_lower.strip().split()
-            if len(words) > 1:
-                topic = words[-2] if words[-1] in ["par", "on", "about"] else words[-1]
-            else:
-                topic = prompt_lower
-            break
-    return (bool(topic), topic)
-
-def clean_topic(topic):
-    topic = topic.strip()
-    topic = re.sub(r"\b(do|dijiye|chahiye|de do|ka|ke|ki|par|on|about|ke upar|ke bare mein)\b", "", topic, flags=re.IGNORECASE)
-    topic = re.sub(r"\s+", " ", topic)
-    return topic.strip()
-
-def expand_query(q):
-    expansions = {
-        "ai": "artificial intelligence",
-        "ml": "machine learning",
-        "dl": "deep learning"
-    }
-    lower = q.strip().lower()
-    if lower in expansions:
-        return expansions[lower]
-    for short, full in expansions.items():
-        if f" {short} " in f" {lower} ":
-            return lower.replace(short, full)
-    return q
-
-# ---------- User Query Handler ----------
-
+# -------------- Main Handler --------------
 def handle_user_query(prompt):
-    # 1. arXiv
-    if is_arxiv_query(prompt):
-        topic = prompt.split()[-1]
-        articles = arxiv_article_search(topic, limit=5)
-        answer = f"**arXiv Preprints on '{topic.title()}'**\n\n"
-        if not articles:
-            answer += "No results found from arXiv."
-        else:
-            for art in articles:
-                answer += f"- [{art['title']}]({art['url']}) ({art['year']})\n"
-        return answer
-
-    # 2. DOAJ
-    if is_doaj_query(prompt):
-        topic = prompt.split()[-1]
-        articles = doaj_article_search(topic, limit=5)
-        answer = f"**DOAJ Open Access Articles on '{topic.title()}'**\n\n"
-        if not articles:
-            answer += "No open access articles found in DOAJ."
-        else:
-            for art in articles:
-                answer += f"- [{art['title']}]({art['url']}) ({art['year']}) - {art['journal']}\n"
-        return answer
-
-    # 3. DataCite
-    if is_datacite_query(prompt):
-        topic = prompt.split()[-1]
-        articles = datacite_article_search(topic, limit=5)
-        answer = f"**DataCite Datasets/Articles on '{topic.title()}'**\n\n"
-        if not articles:
-            answer += "No research datasets/articles found in DataCite."
-        else:
-            for art in articles:
-                answer += f"- [{art['title']}]({art['url']}) ({art['year']}) - {art['journal']}\n"
-        return answer
-
-    # 4. CORE (your style: flexible topic)
-    is_core, topic = is_core_query(prompt)
-    if is_core and topic:
-        topic = clean_topic(topic)
-        topic = expand_query(topic)
-        answer = (
-            f"You can also find journal articles and e-books on '**{topic.title()}**' 24/7 at Bennett University e-Resources platform: [Refread](https://bennett.refread.com/#/home).\n\n"
-            "Here are some latest open access research articles (CORE):\n\n"
-        )
-        results = core_article_search(topic, limit=10)
-        results = sorted(results, key=lambda x: x.get("createdDate", ""), reverse=True)[:5]
-        if not results:
-            answer += (
-                "Sorry, I couldn't find relevant open access research papers right now. "
-                "Try a broader or alternate keyword (e.g., 'artificial intelligence' instead of 'AI')."
-            )
-        else:
-            for art in results:
-                title = art.get("title", "No Title")
-                url = art.get("downloadUrl", art.get("urls", [{}])[0].get("url", "#"))
-                year = art.get("createdDate", "")[:4]
-                answer += f"- [{title}]({url}) {'('+year+')' if year else ''}\n"
-        return answer
-
-    # 5. Book search
+    # Book search (priority check)
     if "find books on" in prompt.lower() or "find book on" in prompt.lower():
         topic = (
             prompt.lower()
@@ -342,11 +218,64 @@ def handle_user_query(prompt):
             "and enter your topic or book title in the search field. For digital books, explore e-resources at [Refread](https://bennett.refread.com/#/home)."
         )
 
-    # 6. Gemini fallback
+    # ARTICLE SEARCH (Hindi/English: topic detection)
+    article_keywords = [
+        "article", "articles", "research paper", "journal", "preprint", "open access", "dataset", "साहित्य", "आर्टिकल", "पत्रिका", "जर्नल", "शोध", "पेपर"
+    ]
+    if any(kw in prompt.lower() for kw in article_keywords):
+        topic = get_topic_from_prompt(prompt)
+        if not topic or len(topic) < 2:
+            return "Please specify a topic for article search. उदाहरण: 'articles on AI' या 'हिंदी साहित्य पर articles'।"
+        topic = topic.strip()
+        
+        answer = f"### 🟦 Bennett University e-Resources (Refread)\n"
+        answer += f"Find e-books and journal articles on **'{topic.title()}'** 24/7 here: [Refread](https://bennett.refread.com/#/home)\n\n"
+        
+        # CORE
+        core_results = core_article_search(topic, limit=5)
+        answer += "### 🌐 Open Access (CORE)\n"
+        if core_results:
+            core_results = sorted(core_results, key=lambda x: x.get("createdDate", ""), reverse=True)
+            for art in core_results[:5]:
+                title = art.get("title", "No Title")
+                url = art.get("downloadUrl", art.get("urls", [{}])[0].get("url", "#"))
+                year = art.get("createdDate", "")[:4]
+                answer += f"- [{title}]({url}) {'('+year+')' if year else ''}\n"
+        else:
+            answer += "No recent articles found on this topic from CORE.\n"
+
+        # arXiv
+        arxiv_results = arxiv_article_search(topic, limit=5)
+        answer += "### 📄 Preprints (arXiv)\n"
+        if arxiv_results:
+            for art in arxiv_results:
+                answer += f"- [{art['title']}]({art['url']}) ({art['year']})\n"
+        else:
+            answer += "No recent preprints found on this topic from arXiv.\n"
+
+        # DOAJ
+        doaj_results = doaj_article_search(topic, limit=5)
+        answer += "### 📚 Open Access Journals (DOAJ)\n"
+        if doaj_results:
+            for art in doaj_results:
+                answer += f"- [{art['title']}]({art['url']}) ({art['year']}) - {art['journal']}\n"
+        else:
+            answer += "No open access journal articles found on this topic from DOAJ.\n"
+
+        # DataCite
+        datacite_results = datacite_article_search(topic, limit=5)
+        answer += "### 🏷️ Research Data/Articles (DataCite)\n"
+        if datacite_results:
+            for art in datacite_results:
+                answer += f"- [{art['title']}]({art['url']}) ({art['year']}) - {art['journal']}\n"
+        else:
+            answer += "No research datasets/articles found on this topic from DataCite.\n"
+
+        return answer
+
+    # Else: General Gemini (FAQ etc)
     payload = create_payload(prompt)
     return call_gemini_api_v2(payload)
-
-# ---------- UI PARTS ----------
 
 def show_quick_actions():
     quick_actions = [
@@ -382,7 +311,7 @@ def main():
     st.markdown("""
     <div style="text-align: center; margin: 2rem 0;">
         <p style="font-size: 1.1em;">Hello! I am Ashu, your AI assistant at Bennett University Library. How can I help you today?<br>
-        <small>Try: <i>arXiv machine learning</i> | <i>doaj library science</i> | <i>datacite climate change</i> | <i>find research paper on AI</i></small></p>
+        <small>Try: <i>AI par articles</i> | <i>articles on Hindi literature</i> | <i>find books on marketing</i> | <i>library timing</i></small></p>
     </div>
     """, unsafe_allow_html=True)
 
