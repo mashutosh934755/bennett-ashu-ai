@@ -121,7 +121,7 @@ def core_article_search(query, limit=20):
     try:
         r = requests.get(url, headers=headers, params=params, timeout=15)
         if r.status_code == 200:
-            return r.json().get("results", [])
+            return r.json()["results"]
         else:
             return []
     except Exception as e:
@@ -131,7 +131,8 @@ def expand_query(q):
     expansions = {
         "ai": "artificial intelligence",
         "ml": "machine learning",
-        "dl": "deep learning"
+        "dl": "deep learning",
+        "ds": "data science"
     }
     lower = q.strip().lower()
     if lower in expansions:
@@ -147,69 +148,70 @@ def is_core_query(prompt):
     Returns (bool, topic) -- topic extracted if possible.
     """
     prompt_lower = prompt.lower()
+    # Keywords for query detection
     keywords = ["article", "research", "journal", "paper", "open access"]
     found_kw = any(kw in prompt_lower for kw in keywords)
-    # Extract topic using regex
-    match = re.search(r'(?:article|paper|journal|research)(?:s)? (on|about)? ([\w\s\-]+)', prompt_lower)
+
+    # Try multiple regex patterns for Hindi-English mix
+    patterns = [
+        r'(?:article|paper|journal|research)(?:s)?\s*(?:on|about|ke upar|ke bare mein|par)?\s*([a-zA-Z0-9\s\-]+)',
+        r'(?:mujhe|i want|chahiye|dijiye)?\s*([a-zA-Z0-9\s\-]+)\s*(?:par|ke upar|ke bare mein)?\s*(?:article|paper|journal|research)'
+    ]
     topic = ""
-    if match:
-        topic = match.group(2).strip()
-    else:
-        # fallback: look for 'open access main agar ho to', etc.
+    for pat in patterns:
+        match = re.search(pat, prompt_lower)
+        if match:
+            topic = match.group(1).strip()
+            break
+
+    # Fallback for "open access" + topic
+    if not topic:
         match2 = re.search(r'(?:open access).*?(ai|python|ml|machine learning|deep learning|data science)', prompt_lower)
         if match2:
             found_kw = True
             topic = match2.group(1)
-    return found_kw and topic != "", topic
+    return found_kw and topic != "", topic.strip()
 
 def handle_user_query(prompt):
-    matched, topic = is_core_query(prompt)
-    if matched and topic:
+    is_core, topic = is_core_query(prompt)
+    if is_core and topic:
         topic = expand_query(topic)
         answer = (
             f"You can also find journal articles and e-books on '**{topic.title()}**' 24/7 at Bennett University e-Resources platform: [Refread](https://bennett.refread.com/#/home).\n\n"
             "Here are some latest open access research articles:\n\n"
         )
         results = core_article_search(topic, limit=20)
-        # Sort by createdDate (latest first), pick top 10 with year if available
-        results = sorted(results, key=lambda x: x.get("createdDate", ""), reverse=True)
-        shown = 0
-        for idx, art in enumerate(results, 1):
-            if shown >= 10:
-                break
-            title = art.get("title", "No Title")
-            url = art.get("downloadUrl", art.get("urls", [{}])[0].get("url", "#"))
-            year = art.get("createdDate", "")[:4]
-            if url and url != "#":
-                answer += f"{idx}. [{title}]({url}) {'('+year+')' if year else ''}\n"
-                shown += 1
-        if shown == 0:
+        # Sort by createdDate desc and top 10
+        results = sorted(results, key=lambda x: x.get("createdDate", ""), reverse=True)[:10]
+        if not results:
             answer += (
                 "Sorry, I couldn't find relevant open access research papers right now. "
                 "Try a broader or alternate keyword (e.g., 'artificial intelligence' instead of 'AI')."
             )
+        else:
+            for art in results:
+                title = art.get("title", "No Title")
+                url = art.get("downloadUrl", art.get("urls", [{}])[0].get("url", "#"))
+                year = art.get("createdDate", "")[:4]
+                answer += f"- [{title}]({url}) {'('+year+')' if year else ''}\n"
         return answer
-    elif prompt.lower().strip() in ['ai', 'ml', 'python', 'deep learning', 'machine learning']:
-        # Only topic provided
-        return (
-            "Would you like to find articles, books, or e-resources on this topic? "
-            "For articles, type: 'articles on AI' or 'papers on ML'. For books, type: 'books on AI'."
-        )
-    elif "find books on" in prompt.lower() or "find book on" in prompt.lower():
-        topic = (
-            prompt.lower()
-            .replace("find books on", "")
-            .replace("find book on", "")
-            .strip()
-        )
-        opac_link = f"https://libraryopac.bennett.edu.in/"
-        return (
-            f"To find books on **{topic.title()}**, visit the Bennett University Library OPAC: [Search here]({opac_link}) "
-            "and enter your topic or book title in the search field. For digital books, explore e-resources at [Refread](https://bennett.refread.com/#/home)."
-        )
     else:
-        payload = create_payload(prompt)
-        return call_gemini_api_v2(payload)
+        # Special: Guide for "find books" queries to OPAC
+        if "find books on" in prompt.lower() or "find book on" in prompt.lower():
+            topic = (
+                prompt.lower()
+                .replace("find books on", "")
+                .replace("find book on", "")
+                .strip()
+            )
+            opac_link = f"https://libraryopac.bennett.edu.in/"
+            return (
+                f"To find books on **{topic.title()}**, visit the Bennett University Library OPAC: [Search here]({opac_link}) "
+                "and enter your topic or book title in the search field. For digital books, explore e-resources at [Refread](https://bennett.refread.com/#/home)."
+            )
+        else:
+            payload = create_payload(prompt)
+            return call_gemini_api_v2(payload)
 
 def show_quick_actions():
     quick_actions = [
@@ -253,7 +255,8 @@ def main():
             st.markdown(message["content"])
 
     st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
-    prompt = st.chat_input("How can I assist you today?")
+    # Professional prompt for search box
+    prompt = st.chat_input("Type your query about books, research papers, journals, library services...")
 
     if prompt:
         st.session_state.messages.append({"role": "user", "content": prompt})
