@@ -3,6 +3,14 @@ import requests
 import os
 import logging
 
+# Set custom favicon and page config at the very top
+st.set_page_config(
+    page_title="Ashu AI @ BU Library",
+    page_icon="https://www.entrepreneurial-universities.org/img/logos/Slide80.JPG",
+    layout="centered",
+    initial_sidebar_state="collapsed"
+)
+
 # --- Logging Setup ---
 logging.basicConfig(
     filename='app.log',
@@ -154,7 +162,6 @@ def expand_query(q):
 
 def handle_user_query(prompt):
     if is_core_query(prompt):
-        # Extract topic, covering more phrases
         topic = (
             prompt.lower()
                 .replace("find research papers on", "")
@@ -170,12 +177,10 @@ def handle_user_query(prompt):
                 .strip()
         )
         topic = expand_query(topic)
-        # 1. Refread Suggestion
         answer = (
             f"You can also find journal articles and e-books on '**{topic.title()}**' 24/7 at Bennett University e-Resources platform: [Refread](https://bennett.refread.com/#/home).\n\n"
             "Here are some latest open access research articles:\n\n"
         )
-        # 2. CORE results (top 10, sorted by createdDate desc)
         results = core_article_search(topic, limit=20)
         results = sorted(results, key=lambda x: x.get("createdDate", ""), reverse=True)[:10]
         if not results:
@@ -191,7 +196,6 @@ def handle_user_query(prompt):
                 answer += f"- [{title}]({url}) {'('+year+')' if year else ''}\n"
         return answer
     else:
-        # Special: Guide for "find books" queries to OPAC
         if "find books on" in prompt.lower() or "find book on" in prompt.lower():
             topic = (
                 prompt.lower()
@@ -250,7 +254,8 @@ def main():
             st.markdown(message["content"])
 
     st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
-    prompt = st.chat_input("Ask your library question…")
+    # ***Professional short placeholder***
+    prompt = st.chat_input("Type your question about BU Library…")
 
     if prompt:
         st.session_state.messages.append({"role": "user", "content": prompt})
