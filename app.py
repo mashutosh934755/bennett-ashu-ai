@@ -15,7 +15,7 @@ GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
 CORE_API_KEY = st.secrets.get("CORE_API_KEY", os.getenv("CORE_API_KEY"))
 
 GEMINI_API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-CORE_API_ENDPOINT = "https://api.core.ac.uk/v3/search/works"   # ✅ NEW endpoint
+CORE_API_ENDPOINT = "https://api.core.ac.uk/v3/search/works"
 
 # --- CSS Styles ---
 CSS_STYLES = """
@@ -111,7 +111,7 @@ def call_gemini_api_v2(payload):
         logging.error(f"Network/API error: {e}")
     return answer
 
-def core_article_search(query, limit=5):
+def core_article_search(query, limit=20):
     if not CORE_API_KEY:
         return []
     url = f"{CORE_API_ENDPOINT}"
@@ -129,10 +129,12 @@ def core_article_search(query, limit=5):
 def is_core_query(prompt):
     keywords = [
         "find research paper", "find research papers", "research articles", "open access article",
-        "find papers on", "journal article", "download article", "open access paper"
+        "find papers on", "journal article", "download article", "open access paper",
+        "article on", "papers on", "journal on"
     ]
+    prompt_lower = prompt.lower()
     for kw in keywords:
-        if kw in prompt.lower():
+        if kw in prompt_lower:
             return True
     return False
 
@@ -152,7 +154,7 @@ def expand_query(q):
 
 def handle_user_query(prompt):
     if is_core_query(prompt):
-        # Extract topic (basic logic)
+        # Extract topic, covering more phrases
         topic = (
             prompt.lower()
                 .replace("find research papers on", "")
@@ -162,23 +164,34 @@ def handle_user_query(prompt):
                 .replace("find papers on", "")
                 .replace("journal article on", "")
                 .replace("open access paper on", "")
+                .replace("article on", "")
+                .replace("journal on", "")
+                .replace("papers on", "")
                 .strip()
         )
         topic = expand_query(topic)
-        results = core_article_search(topic, limit=5)
+        # 1. Refread Suggestion
+        answer = (
+            f"You can also find journal articles and e-books on '**{topic.title()}**' 24/7 at Bennett University e-Resources platform: [Refread](https://bennett.refread.com/#/home).\n\n"
+            "Here are some latest open access research articles:\n\n"
+        )
+        # 2. CORE results (top 10, sorted by createdDate desc)
+        results = core_article_search(topic, limit=20)
+        results = sorted(results, key=lambda x: x.get("createdDate", ""), reverse=True)[:10]
         if not results:
-            return (
+            answer += (
                 "Sorry, I couldn't find relevant open access research papers right now. "
                 "Try a broader or alternate keyword (e.g., 'artificial intelligence' instead of 'AI')."
             )
-        answer = "Here are some open access research articles:\n\n"
-        for art in results:
-            title = art.get("title", "No Title")
-            url = art.get("downloadUrl", art.get("urls", [{}])[0].get("url", "#"))
-            answer += f"- [{title}]({url})\n"
+        else:
+            for art in results:
+                title = art.get("title", "No Title")
+                url = art.get("downloadUrl", art.get("urls", [{}])[0].get("url", "#"))
+                year = art.get("createdDate", "")[:4]
+                answer += f"- [{title}]({url}) {'('+year+')' if year else ''}\n"
         return answer
     else:
-        # Special: Guide for "find books" queries to OPAC (Gemini can handle, but we can add extra logic)
+        # Special: Guide for "find books" queries to OPAC
         if "find books on" in prompt.lower() or "find book on" in prompt.lower():
             topic = (
                 prompt.lower()
@@ -237,7 +250,7 @@ def main():
             st.markdown(message["content"])
 
     st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
-    prompt = st.chat_input("Ask anything: e.g. 'How can I borrow books?', 'Find research papers on AI', 'Find books on Python'")
+    prompt = st.chat_input("Ask anything: e.g. 'How can I borrow books?', 'Find research articles on AI', 'article on Python', 'papers about ML'")
 
     if prompt:
         st.session_state.messages.append({"role": "user", "content": prompt})
