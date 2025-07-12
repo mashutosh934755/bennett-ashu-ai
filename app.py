@@ -3,13 +3,13 @@ import requests
 import os
 import logging
 
-# --- Set Page Config with Custom Favicon ---
 st.set_page_config(
     page_title="Ashu AI @ BU Library",
     page_icon="https://play-lh.googleusercontent.com/kCXMe_CDJaLcEb_Ax8hoSo9kfqOmeB7VoB4zNI5dCSAD8QSeNZE1Eow4NBXx-NjTDQ",
     layout="centered",
     initial_sidebar_state="collapsed"
 )
+
 
 # --- Logging Setup ---
 logging.basicConfig(
@@ -258,7 +258,7 @@ def main():
             st.markdown(message["content"])
 
     st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
-    prompt = st.chat_input("Ask your library question…")
+    prompt = st.chat_input("Ask anything: e.g. 'How can I borrow books?', 'Find research articles on AI', 'article on Python', 'papers about ML'")
 
     if prompt:
         st.session_state.messages.append({"role": "user", "content": prompt})
