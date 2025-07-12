@@ -3,29 +3,25 @@ import requests
 import os
 import logging
 
-# Set custom favicon and page config at the very top
 st.set_page_config(
     page_title="Ashu AI @ BU Library",
-    page_icon="https://www.entrepreneurial-universities.org/img/logos/Slide80.JPG",
+    page_icon="https://play-lh.googleusercontent.com/kCXMe_CDJaLcEb_Ax8hoSo9kfqOmeB7VoB4zNI5dCSAD8QSeNZE1Eow4NBXx-NjTDQ",
     layout="centered",
     initial_sidebar_state="collapsed"
 )
 
-# --- Logging Setup ---
 logging.basicConfig(
     filename='app.log',
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# --- API Keys from Streamlit secrets or env ---
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
 CORE_API_KEY = st.secrets.get("CORE_API_KEY", os.getenv("CORE_API_KEY"))
 
 GEMINI_API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 CORE_API_ENDPOINT = "https://api.core.ac.uk/v3/search/works"
 
-# --- CSS Styles ---
 CSS_STYLES = """
 <style>
     :root { --header-color: #2e86c1; }
@@ -124,7 +120,11 @@ def core_article_search(query, limit=20):
         return []
     url = f"{CORE_API_ENDPOINT}"
     headers = {"Authorization": f"Bearer {CORE_API_KEY}"}
-    params = {"q": query, "limit": limit}
+    params = {
+        "q": query,
+        "limit": limit,
+        "sort": "year:desc"
+    }
     try:
         r = requests.get(url, headers=headers, params=params, timeout=15)
         if r.status_code == 200:
@@ -134,15 +134,14 @@ def core_article_search(query, limit=20):
     except Exception as e:
         return []
 
-def is_core_query(prompt):
+def is_article_query(prompt):
     keywords = [
-        "find research paper", "find research papers", "research articles", "open access article",
-        "find papers on", "journal article", "download article", "open access paper",
-        "article on", "papers on", "journal on"
+        "article", "articles", "journal", "paper", "papers", "research", "latest articles", "recent articles"
     ]
     prompt_lower = prompt.lower()
+    # Any prompt that has these words and a topic
     for kw in keywords:
-        if kw in prompt_lower:
+        if kw in prompt_lower and len(prompt_lower.split()) > 2:
             return True
     return False
 
@@ -160,36 +159,41 @@ def expand_query(q):
             return lower.replace(short, full)
     return q
 
-def handle_user_query(prompt):
-    if is_core_query(prompt):
-        topic = (
-            prompt.lower()
-                .replace("find research papers on", "")
-                .replace("find research paper on", "")
-                .replace("research articles on", "")
-                .replace("open access article on", "")
-                .replace("find papers on", "")
-                .replace("journal article on", "")
-                .replace("open access paper on", "")
-                .replace("article on", "")
-                .replace("journal on", "")
-                .replace("papers on", "")
-                .strip()
-        )
+def extract_topic(prompt):
+    # Extract words after "on", "about", "of"
+    import re
+    m = re.search(r"(?:articles?|papers?|journal|research)\s*(?:on|about|of)?\s*(.*)", prompt, re.IGNORECASE)
+    if m:
+        topic = m.group(1).strip()
+        if topic.lower().startswith("latest") or topic.lower().startswith("recent"):
+            topic = topic.split(" ", 1)[-1]
+        topic = topic.strip()
         topic = expand_query(topic)
+        return topic
+    return prompt.strip()
+
+def handle_user_query(prompt):
+    # Handle article queries with or without 'open access'
+    if is_article_query(prompt):
+        topic = extract_topic(prompt)
         answer = (
-            f"You can also find journal articles and e-books on '**{topic.title()}**' 24/7 at Bennett University e-Resources platform: [Refread](https://bennett.refread.com/#/home).\n\n"
-            "Here are some latest open access research articles:\n\n"
+            f"**You can also access digital articles and e-books on '{topic.title()}' anytime at BU e-Resources platform: [Refread](https://bennett.refread.com/#/home).**\n\n"
+            "Here are the latest open access research articles:\n\n"
         )
         results = core_article_search(topic, limit=20)
-        results = sorted(results, key=lambda x: x.get("createdDate", ""), reverse=True)[:10]
-        if not results:
+        # Sort by createdDate descending, filter for 2025 first if available, max 10 shown
+        results = sorted(results, key=lambda x: x.get("createdDate", ""), reverse=True)
+        filtered = [art for art in results if art.get("createdDate", "").startswith("2025")]
+        if len(filtered) < 10:
+            filtered += [art for art in results if not art.get("createdDate", "").startswith("2025")]
+        filtered = filtered[:10]
+        if not filtered:
             answer += (
                 "Sorry, I couldn't find relevant open access research papers right now. "
-                "Try a broader or alternate keyword (e.g., 'artificial intelligence' instead of 'AI')."
+                "Try a broader or alternate keyword."
             )
         else:
-            for art in results:
+            for art in filtered:
                 title = art.get("title", "No Title")
                 url = art.get("downloadUrl", art.get("urls", [{}])[0].get("url", "#"))
                 year = art.get("createdDate", "")[:4]
@@ -254,7 +258,6 @@ def main():
             st.markdown(message["content"])
 
     st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
-    # ***Professional short placeholder***
     prompt = st.chat_input("Type your question about BU Library…")
 
     if prompt:
