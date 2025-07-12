@@ -10,12 +10,20 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# --- API Keys from Streamlit secrets or env ---
+# --- API Keys ---
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
 CORE_API_KEY = st.secrets.get("CORE_API_KEY", os.getenv("CORE_API_KEY"))
 
 GEMINI_API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 CORE_API_ENDPOINT = "https://api.core.ac.uk/v3/search/works"
+
+# --- Favicon/Branding ---
+st.set_page_config(
+    page_title="Ashu AI @ BU Library",
+    page_icon="https://library.bennett.edu.in/wp-content/uploads/2024/05/WhatsApp-Image-2024-05-01-at-12.41.02-PM-e1714549052999-150x150.jpeg",
+    layout="centered",
+    initial_sidebar_state="collapsed"
+)
 
 # --- CSS Styles ---
 CSS_STYLES = """
@@ -120,7 +128,7 @@ def core_article_search(query, limit=20):
     try:
         r = requests.get(url, headers=headers, params=params, timeout=15)
         if r.status_code == 200:
-            return r.json()["results"]
+            return r.json().get("results", [])
         else:
             return []
     except Exception as e:
@@ -130,52 +138,57 @@ def is_core_query(prompt):
     keywords = [
         "find research paper", "find research papers", "research articles", "open access article",
         "find papers on", "journal article", "download article", "open access paper",
-        "article on", "papers on", "journal on"
+        "article on", "papers on", "journal on", "articles on", "open articles"
     ]
     prompt_lower = prompt.lower()
     for kw in keywords:
         if kw in prompt_lower:
             return True
+    # Advanced: catch simple phrases ("AI articles", "python article", "ML papers" etc)
+    if any(word in prompt_lower for word in ["article", "articles", "paper", "papers", "journal"]) and len(prompt_lower.split()) <= 5:
+        return True
     return False
 
-def expand_query(q):
-    expansions = {
-        "ai": "artificial intelligence",
-        "ml": "machine learning",
-        "dl": "deep learning"
-    }
-    lower = q.strip().lower()
-    if lower in expansions:
-        return expansions[lower]
-    for short, full in expansions.items():
-        if f" {short} " in f" {lower} ":
-            return lower.replace(short, full)
-    return q
+def extract_core_topic(prompt):
+    # Extracts topic from various user queries, fallback to the whole prompt if not found
+    parts = [
+        "find research papers on",
+        "find research paper on",
+        "research articles on",
+        "open access article on",
+        "find papers on",
+        "journal article on",
+        "open access paper on",
+        "article on",
+        "journal on",
+        "papers on",
+        "articles on",
+        "open articles on",
+        "papers about",
+        "article about",
+        "articles about",
+        "journal about"
+    ]
+    topic = prompt.lower()
+    for p in parts:
+        if p in topic:
+            topic = topic.split(p)[-1]
+            break
+    # Extra: "AI articles", "Python papers" etc
+    words = topic.strip().split()
+    if len(words) <= 3 and words[0] in ["ai", "python", "ml", "dl"]:
+        return {"ai": "artificial intelligence", "ml": "machine learning", "dl": "deep learning"}.get(words[0], topic.strip())
+    return topic.strip()
 
 def handle_user_query(prompt):
     if is_core_query(prompt):
-        # Extract topic, covering more phrases
-        topic = (
-            prompt.lower()
-                .replace("find research papers on", "")
-                .replace("find research paper on", "")
-                .replace("research articles on", "")
-                .replace("open access article on", "")
-                .replace("find papers on", "")
-                .replace("journal article on", "")
-                .replace("open access paper on", "")
-                .replace("article on", "")
-                .replace("journal on", "")
-                .replace("papers on", "")
-                .strip()
-        )
-        topic = expand_query(topic)
-        # 1. Refread Suggestion
+        topic = extract_core_topic(prompt)
+        if not topic or len(topic) < 2:
+            topic = prompt.strip()
         answer = (
             f"You can also find journal articles and e-books on '**{topic.title()}**' 24/7 at Bennett University e-Resources platform: [Refread](https://bennett.refread.com/#/home).\n\n"
             "Here are some latest open access research articles:\n\n"
         )
-        # 2. CORE results (top 10, sorted by createdDate desc)
         results = core_article_search(topic, limit=20)
         results = sorted(results, key=lambda x: x.get("createdDate", ""), reverse=True)[:10]
         if not results:
@@ -250,7 +263,7 @@ def main():
             st.markdown(message["content"])
 
     st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
-    prompt = st.chat_input("Ask anything: e.g. 'How can I borrow books?', 'Find research articles on AI', 'article on Python', 'papers about ML'")
+    prompt = st.chat_input("How can I assist you today?")  # Professional & minimal placeholder
 
     if prompt:
         st.session_state.messages.append({"role": "user", "content": prompt})
