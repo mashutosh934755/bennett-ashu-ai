@@ -15,9 +15,9 @@ GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
 CORE_API_KEY = st.secrets.get("CORE_API_KEY", os.getenv("CORE_API_KEY"))
 
 GEMINI_API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-CORE_API_ENDPOINT = "https://core.ac.uk/api-v3/search/works"
+CORE_API_ENDPOINT = "https://api.core.ac.uk/v3/search/works"   # ✅ NEW endpoint
 
-# --- CSS Styles (as above, unchanged for brevity) ---
+# --- CSS Styles ---
 CSS_STYLES = """
 <style>
     :root { --header-color: #2e86c1; }
@@ -136,6 +136,20 @@ def is_core_query(prompt):
             return True
     return False
 
+def expand_query(q):
+    expansions = {
+        "ai": "artificial intelligence",
+        "ml": "machine learning",
+        "dl": "deep learning"
+    }
+    lower = q.strip().lower()
+    if lower in expansions:
+        return expansions[lower]
+    for short, full in expansions.items():
+        if f" {short} " in f" {lower} ":
+            return lower.replace(short, full)
+    return q
+
 def handle_user_query(prompt):
     if is_core_query(prompt):
         # Extract topic (basic logic)
@@ -150,9 +164,13 @@ def handle_user_query(prompt):
                 .replace("open access paper on", "")
                 .strip()
         )
+        topic = expand_query(topic)
         results = core_article_search(topic, limit=5)
         if not results:
-            return "Sorry, I couldn't find relevant open access research papers right now."
+            return (
+                "Sorry, I couldn't find relevant open access research papers right now. "
+                "Try a broader or alternate keyword (e.g., 'artificial intelligence' instead of 'AI')."
+            )
         answer = "Here are some open access research articles:\n\n"
         for art in results:
             title = art.get("title", "No Title")
