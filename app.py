@@ -311,7 +311,6 @@ def main():
     st.markdown("""
     <div style="text-align: center; margin: 2rem 0;">
         <p style="font-size: 1.1em;">Hello! I am Ashu, your AI assistant at Bennett University Library. How can I help you today?<br>
-        <small>Try: <i>AI par articles</i> | <i>articles on Hindi literature</i> | <i>find books on marketing</i> | <i>library timing</i></small></p>
     </div>
     """, unsafe_allow_html=True)
 
