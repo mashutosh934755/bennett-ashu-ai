@@ -127,10 +127,17 @@ def core_article_search(query, limit=20):
     }
     try:
         r = requests.get(url, headers=headers, params=params, timeout=15)
-        if r.status_code == 200:
-            return r.json()["results"]
-        else:
-            return []
+        data = r.json() if r.status_code == 200 else {}
+        if data.get("results"):
+            return data["results"]
+        # Try broad query if not found
+        if " " in query:
+            simple_query = query.split(" ")[-1]  # last word for broader
+            params["q"] = simple_query
+            r2 = requests.get(url, headers=headers, params=params, timeout=15)
+            data2 = r2.json() if r2.status_code == 200 else {}
+            return data2.get("results", [])
+        return []
     except Exception as e:
         return []
 
@@ -139,9 +146,9 @@ def is_article_query(prompt):
         "article", "articles", "journal", "paper", "papers", "research", "latest articles", "recent articles"
     ]
     prompt_lower = prompt.lower()
-    # Any prompt that has these words and a topic
+    # Agar keyword hai aur teen se zyada word hain (to ensure it's a topic query)
     for kw in keywords:
-        if kw in prompt_lower and len(prompt_lower.split()) > 2:
+        if kw in prompt_lower and len(prompt_lower.split()) >= 2:
             return True
     return False
 
@@ -160,7 +167,6 @@ def expand_query(q):
     return q
 
 def extract_topic(prompt):
-    # Extract words after "on", "about", "of"
     import re
     m = re.search(r"(?:articles?|papers?|journal|research)\s*(?:on|about|of)?\s*(.*)", prompt, re.IGNORECASE)
     if m:
@@ -173,7 +179,7 @@ def extract_topic(prompt):
     return prompt.strip()
 
 def handle_user_query(prompt):
-    # Handle article queries with or without 'open access'
+    # If article query, always search and retry if empty
     if is_article_query(prompt):
         topic = extract_topic(prompt)
         answer = (
@@ -181,7 +187,7 @@ def handle_user_query(prompt):
             "Here are the latest open access research articles:\n\n"
         )
         results = core_article_search(topic, limit=20)
-        # Sort by createdDate descending, filter for 2025 first if available, max 10 shown
+        # sort and filter for latest, prioritise 2025
         results = sorted(results, key=lambda x: x.get("createdDate", ""), reverse=True)
         filtered = [art for art in results if art.get("createdDate", "").startswith("2025")]
         if len(filtered) < 10:
@@ -200,6 +206,7 @@ def handle_user_query(prompt):
                 answer += f"- [{title}]({url}) {'('+year+')' if year else ''}\n"
         return answer
     else:
+        # Books and other queries
         if "find books on" in prompt.lower() or "find book on" in prompt.lower():
             topic = (
                 prompt.lower()
@@ -258,7 +265,7 @@ def main():
             st.markdown(message["content"])
 
     st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
-    prompt = st.chat_input("Type your question about BU Library…")
+    prompt = st.chat_input("Type your library query...")
 
     if prompt:
         st.session_state.messages.append({"role": "user", "content": prompt})
