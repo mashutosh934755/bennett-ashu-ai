@@ -10,15 +10,14 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# --- API Configuration ---
+# --- API Keys from Streamlit secrets or env ---
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
-GEMINI_API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-
-# --- (OPTIONAL/FOR LATER) CORE API Configuration ---
 CORE_API_KEY = st.secrets.get("CORE_API_KEY", os.getenv("CORE_API_KEY"))
+
+GEMINI_API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 CORE_API_ENDPOINT = "https://core.ac.uk/api-v3/search/works"
 
-# --- CSS Styles ---
+# --- CSS Styles (as above, unchanged for brevity) ---
 CSS_STYLES = """
 <style>
     :root { --header-color: #2e86c1; }
@@ -112,10 +111,9 @@ def call_gemini_api_v2(payload):
         logging.error(f"Network/API error: {e}")
     return answer
 
-# ---- (For future) CORE API Integration function: ----
 def core_article_search(query, limit=5):
     if not CORE_API_KEY:
-        return "CORE API Key is missing. Please set it as a secret."
+        return []
     url = f"{CORE_API_ENDPOINT}"
     headers = {"Authorization": f"Bearer {CORE_API_KEY}"}
     params = {"q": query, "limit": limit}
@@ -127,6 +125,57 @@ def core_article_search(query, limit=5):
             return []
     except Exception as e:
         return []
+
+def is_core_query(prompt):
+    keywords = [
+        "find research paper", "find research papers", "research articles", "open access article",
+        "find papers on", "journal article", "download article", "open access paper"
+    ]
+    for kw in keywords:
+        if kw in prompt.lower():
+            return True
+    return False
+
+def handle_user_query(prompt):
+    if is_core_query(prompt):
+        # Extract topic (basic logic)
+        topic = (
+            prompt.lower()
+                .replace("find research papers on", "")
+                .replace("find research paper on", "")
+                .replace("research articles on", "")
+                .replace("open access article on", "")
+                .replace("find papers on", "")
+                .replace("journal article on", "")
+                .replace("open access paper on", "")
+                .strip()
+        )
+        results = core_article_search(topic, limit=5)
+        if not results:
+            return "Sorry, I couldn't find relevant open access research papers right now."
+        answer = "Here are some open access research articles:\n\n"
+        for art in results:
+            title = art.get("title", "No Title")
+            url = art.get("downloadUrl", art.get("urls", [{}])[0].get("url", "#"))
+            answer += f"- [{title}]({url})\n"
+        return answer
+    else:
+        # Special: Guide for "find books" queries to OPAC (Gemini can handle, but we can add extra logic)
+        if "find books on" in prompt.lower() or "find book on" in prompt.lower():
+            topic = (
+                prompt.lower()
+                .replace("find books on", "")
+                .replace("find book on", "")
+                .strip()
+            )
+            opac_link = f"https://libraryopac.bennett.edu.in/"
+            return (
+                f"To find books on **{topic.title()}**, visit the Bennett University Library OPAC: [Search here]({opac_link}) "
+                "and enter your topic or book title in the search field. For digital books, explore e-resources at [Refread](https://bennett.refread.com/#/home)."
+            )
+        else:
+            payload = create_payload(prompt)
+            return call_gemini_api_v2(payload)
 
 def show_quick_actions():
     quick_actions = [
@@ -142,14 +191,12 @@ def show_quick_actions():
         unsafe_allow_html=True
     )
 
-# --- Session state for chat history ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
 def main():
     inject_custom_css()
 
-    # --- Header Section ---
     st.markdown("""
     <div class="profile-container">
         <img src="https://library.bennett.edu.in/wp-content/uploads/2024/05/WhatsApp-Image-2024-05-01-at-12.41.02-PM-e1714549052999-150x150.jpeg" 
@@ -161,35 +208,29 @@ def main():
 
     show_quick_actions()
 
-    # --- Welcome Message ---
     st.markdown("""
     <div style="text-align: center; margin: 2rem 0;">
         <p style="font-size: 1.1em;">Hello! I am Ashu, your AI assistant at Bennett University Library. How can I help you today?</p>
     </div>
     """, unsafe_allow_html=True)
 
-    # --- Chat History Display ---
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    # --- Chat Input at Bottom ---
     st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
-    prompt = st.chat_input("Ask me about BU Library (e.g., 'What are the library hours?')")
+    prompt = st.chat_input("Ask anything: e.g. 'How can I borrow books?', 'Find research papers on AI', 'Find books on Python'")
 
     if prompt:
         st.session_state.messages.append({"role": "user", "content": prompt})
 
         with st.spinner("Ashu is typing..."):
-            # Default: Gemini response
-            payload = create_payload(prompt)
-            answer = call_gemini_api_v2(payload)
+            answer = handle_user_query(prompt)
 
         st.session_state.messages.append({"role": "assistant", "content": answer})
         st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # --- Fixed Footer ---
     st.markdown("""
     <div class="footer">
         <div style="margin: 0.5rem 0;">
