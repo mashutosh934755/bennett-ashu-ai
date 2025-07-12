@@ -10,9 +10,13 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# --- API Configuration (Update: Gemini 2.0-flash + new key header) ---
-GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"] if "GEMINI_API_KEY" in st.secrets else os.getenv("GEMINI_API_KEY")
+# --- API Configuration ---
+GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
 GEMINI_API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+
+# --- (OPTIONAL/FOR LATER) CORE API Configuration ---
+CORE_API_KEY = st.secrets.get("CORE_API_KEY", os.getenv("CORE_API_KEY"))
+CORE_API_ENDPOINT = "https://core.ac.uk/api-v3/search/works"
 
 # --- CSS Styles ---
 CSS_STYLES = """
@@ -108,6 +112,22 @@ def call_gemini_api_v2(payload):
         logging.error(f"Network/API error: {e}")
     return answer
 
+# ---- (For future) CORE API Integration function: ----
+def core_article_search(query, limit=5):
+    if not CORE_API_KEY:
+        return "CORE API Key is missing. Please set it as a secret."
+    url = f"{CORE_API_ENDPOINT}"
+    headers = {"Authorization": f"Bearer {CORE_API_KEY}"}
+    params = {"q": query, "limit": limit}
+    try:
+        r = requests.get(url, headers=headers, params=params, timeout=15)
+        if r.status_code == 200:
+            return r.json()["results"]
+        else:
+            return []
+    except Exception as e:
+        return []
+
 def show_quick_actions():
     quick_actions = [
         ("Find e-Resources", "https://bennett.refread.com/#/home"),
@@ -160,8 +180,8 @@ def main():
     if prompt:
         st.session_state.messages.append({"role": "user", "content": prompt})
 
-        # --- Show a loading indicator while processing ---
         with st.spinner("Ashu is typing..."):
+            # Default: Gemini response
             payload = create_payload(prompt)
             answer = call_gemini_api_v2(payload)
 
