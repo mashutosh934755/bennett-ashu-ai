@@ -1,8 +1,8 @@
 import streamlit as st
 import requests
 import os
+import re
 import logging
-import re  # ← Don't forget!
 
 # --- Logging Setup ---
 logging.basicConfig(
@@ -48,32 +48,12 @@ def create_quick_action_button(text, url):
 def create_payload(prompt):
     system_instruction = (
         "You are Ashu, an AI assistant for Bennett University Library. "
-        "Provide accurate and concise answers based on the following FAQ and library information. "
-        "Key information: "
-        "- Library website: https://library.bennett.edu.in/. "
-        "- Library timings: Weekdays 8:00 AM to 12:00 AM (midnight), Weekends & Holidays 9:00 AM to 5:00 PM (may vary during vacations, check https://library.bennett.edu.in/index.php/working-hours/). "
-        "- Physical book search: Use https://libraryopac.bennett.edu.in/ to search for physical books. For specific searches (e.g., by title or topic like 'Python'), guide users to enter terms in the catalog's title field. Automatic searches are not possible. "
-        "- e-Resources: Access digital books and journal articles at https://bennett.refread.com/#/home, available 24/7 remotely. "
-        "- Group Discussion Rooms: Book at http://10.6.0.121/gdroombooking/. "
-        "FAQ: "
-        "- Borrowing books: Use automated kiosks in the library (see library tutorial for details). "
-        "- Return books: Use the 24/7 Drop Box outside the library (see library tutorial). "
-        "- Overdue checks: Automated overdue emails are sent, or check via OPAC at https://libraryopac.bennett.edu.in/. "
-        "- Journal articles: Accessible 24/7 remotely at https://bennett.refread.com/#/home. "
-        "- Printing/Scanning: Available at the LRC from 9:00 AM to 5:30 PM. For laptop printing, email libraryhelpdesk@bennett.edu.in for official printouts or visit M-Block Library for other services. "
-        "- Alumni access: Alumni can access the LRC for reference. "
-        "- Book checkout limits: Refer to the library tutorial for details. "
-        "- Overdue fines: Pay via BU Payment Portal and update library staff. "
-        "- Book recommendations: Submit at https://docs.google.com/forms/d/e/1FAIpQLSeC0-LPlWvUbYBcN834Ct9kYdC9Oebutv5VWRcTujkzFgRjZw/viewform. "
-        "- Appeal fines: Contact libraryhelpdesk@bennett.edu.in or visit the HelpDesk. "
-        "- Download e-Books: Download chapters at https://bennett.refread.com/#/home. "
-        "- Inter Library Loan: Available via DELNET, contact library for details. "
-        "- Non-BU interns: Can use the library for reading only. "
-        "- Finding books on shelves: Search via OPAC; books have Call Numbers, and shelves are marked (see tutorial). "
-        "- Snacks in LRC: Not allowed, but water bottles are permitted. "
-        "- Drop Box issues: Confirm return via auto-generated email; if none, contact libraryhelpdesk@bennett.edu.in. "
-        "- Reserve a book: Use the 'Place Hold' feature in OPAC at https://libraryopac.bennett.edu.in/. "
-        "If the question is unrelated, politely redirect to library-related topics. "
+        "Your answers should be concise, friendly, and professional like ChatGPT, supporting Hindi-English mix queries. "
+        "Provide accurate answers based on the following FAQ and library info. "
+        "Key info: Library site: https://library.bennett.edu.in/ ; Timings: Weekdays 8AM-12AM, Weekends/Holidays 9AM-5PM. "
+        "Physical books: https://libraryopac.bennett.edu.in/ ; E-resources: https://bennett.refread.com/#/home ; GD Room Booking: http://10.6.0.121/gdroombooking/ "
+        "Borrow/Return: Automated kiosk & 24/7 drop box. Overdue, fine, alumni access etc. as per tutorial/FAQ. "
+        "If the question is not library related, politely redirect. "
         f"User question: {prompt}"
     )
     return {
@@ -85,7 +65,7 @@ def create_payload(prompt):
 def call_gemini_api_v2(payload):
     if not GEMINI_API_KEY:
         logging.error("Gemini API Key is missing.")
-        return "Gemini API Key is missing. Please set it as a secret in Streamlit Cloud."
+        return "Sorry, system issue. Please try again later."
     try:
         response = requests.post(
             GEMINI_API_ENDPOINT,
@@ -100,16 +80,13 @@ def call_gemini_api_v2(payload):
             try:
                 candidates = response.json().get("candidates", [{}])
                 answer = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "No answer found.")
-                logging.info("Gemini API success: %s", answer[:100])
             except Exception as e:
                 logging.error(f"Error parsing response: {e}")
-                answer = "An error occurred while processing your request."
+                answer = "Sorry, kuch problem aayi. Please try again."
         else:
-            answer = f"Connection error: {response.status_code} - {response.text}"
-            logging.error(answer)
+            answer = "Sorry, backend connection issue."
     except requests.RequestException as e:
-        answer = "A network error occurred. Please try again later."
-        logging.error(f"Network/API error: {e}")
+        answer = "Sorry, service unavailable. Please try again shortly."
     return answer
 
 def core_article_search(query, limit=20):
@@ -127,74 +104,81 @@ def core_article_search(query, limit=20):
     except Exception as e:
         return []
 
-# --- New: More flexible Hindi/English intent detection + topic extraction ---
+# --- SMART TOPIC DETECTION ---
 def is_core_query(prompt):
-    """Detect if prompt is for CORE and try to extract topic."""
+    # Accept natural mix language and phrases
     keywords = [
         "find research paper", "find research papers", "research articles", "open access article",
         "find papers on", "journal article", "download article", "open access paper",
         "article on", "papers on", "journal on",
-        "article", "research paper", "journal", "papers"
+        "article", "articles", "research paper", "journal", "journals", "papers", "paper"
     ]
     prompt_lower = prompt.lower()
-    topic = None
-    for kw in keywords:
-        if kw in prompt_lower:
-            # Try to extract after "on", "par", "ke bare mein", "about" etc.
-            # E.g., "article on AI", "article do AI par", "mujhe python par article chahiye"
-            topic_match = re.search(r"(?:on|par|about|ke bare mein)\s+([a-zA-Z0-9\- ]+)", prompt_lower)
-            if topic_match:
-                topic = topic_match.group(1)
-                break
-            # Hindi/English mixed: "article do AI par", "journal dijiye ML ke bare mein"
-            topic_match2 = re.search(r"(?:article|journal|paper|papers|research paper)[\w\s]*([a-zA-Z0-9\- ]+)\s*(?:par|on|about|ke bare mein)", prompt_lower)
-            if topic_match2:
-                topic = topic_match2.group(1)
-                break
-            # Simpler: "AI article", "ML ke bare mein journal chahiye"
-            topic_match3 = re.search(r"([a-zA-Z0-9\- ]+)\s*(?:article|journal|paper|papers|research paper)", prompt_lower)
-            if topic_match3:
-                topic = topic_match3.group(1)
-                break
-            # Last fallback, take last word (works for "mujhe ai par article chahiye")
-            words = prompt_lower.strip().split()
-            if len(words) > 1:
-                topic = words[-2] if words[-1] in ["par", "on", "about"] else words[-1]
-            else:
-                topic = prompt_lower
-            break
-    return (bool(topic), topic)
+
+    # 1. "ML par articles" OR "chatgpt par article chahiye"
+    m = re.search(r"([\w\s\-\+]+?)\s*(par|on|about|ke bare mein)", prompt_lower)
+    if m:
+        topic = m.group(1).strip()
+        if any(kw in prompt_lower for kw in keywords):
+            return (True, topic)
+    # 2. "articles on ML"
+    m = re.search(r"(on|par|about|ke bare mein)\s*([\w\s\-\+]+)", prompt_lower)
+    if m:
+        topic = m.group(2).strip()
+        if any(kw in prompt_lower for kw in keywords):
+            return (True, topic)
+    # 3. "ML ke bare mein journal chahiye"
+    m = re.search(r"([\w\s\-\+]+?)\s*ke bare mein\s*(journal|article|research paper|papers)?", prompt_lower)
+    if m:
+        topic = m.group(1).strip()
+        if any(kw in prompt_lower for kw in keywords):
+            return (True, topic)
+    # 4. "AI article", "chatgpt journal"
+    m = re.search(r"([\w\s\-\+]+)\s*(article|articles|journal|journals|research paper|papers)$", prompt_lower)
+    if m:
+        topic = m.group(1).strip()
+        if any(kw in prompt_lower for kw in keywords):
+            return (True, topic)
+    # 5. "AI", "ML", etc. (one word, but looks like a research query)
+    if any(kw in prompt_lower for kw in keywords):
+        tokens = prompt_lower.split()
+        if len(tokens) == 1:
+            return (True, prompt_lower)
+    return (False, None)
 
 def clean_topic(topic):
-    topic = topic.strip()
-    topic = re.sub(r"\b(do|dijiye|chahiye|de do|ka|ke|ki|par|on|about|ke upar|ke bare mein)\b", "", topic, flags=re.IGNORECASE)
-    topic = re.sub(r"\s+", " ", topic)
-    return topic.strip()
-
-def expand_query(q):
+    # Clean up common trailing/leading words and connect ML/AI/DL to full forms
     expansions = {
-        "ai": "artificial intelligence",
         "ml": "machine learning",
-        "dl": "deep learning"
+        "ai": "artificial intelligence",
+        "dl": "deep learning",
+        "llm": "large language model",
+        "nlp": "natural language processing"
     }
-    lower = q.strip().lower()
-    if lower in expansions:
-        return expansions[lower]
-    for short, full in expansions.items():
-        if f" {short} " in f" {lower} ":
-            return lower.replace(short, full)
-    return q
+    topic = topic.strip(" .?").lower()
+    topic = re.sub(r"\b(do|dijiye|chahiye|de do|ka|ke|ki|par|on|about|ke upar|ke bare mein|articles|article|journal|journals|research paper|papers|latest|naye|waale|wala|show|list|open access|open-access|pdf|fulltext|results)\b", "", topic)
+    topic = re.sub(r"\s+", " ", topic)
+    topic = topic.strip()
+    # Expand short forms to full
+    if topic in expansions:
+        topic = expansions[topic]
+    return topic
 
 def handle_user_query(prompt):
-    is_core, topic = is_core_query(prompt)
-    if is_core and topic:
-        topic = clean_topic(topic)
-        topic = expand_query(topic)
+    # Core article queries
+    core_q, topic = is_core_query(prompt)
+    if core_q and topic:
+        topic_clean = clean_topic(topic)
+        # Don't respond for empty topic
+        if not topic_clean or topic_clean in ["article", "journal", "research paper", "papers"]:
+            return "Please specify a subject/topic (e.g., 'AI par articles', 'machine learning ke bare mein journal', 'cloud computing paper')."
+        # Friendly professional suggestion + CORE results
         answer = (
-            f"You can also find journal articles and e-books on '**{topic.title()}**' 24/7 at Bennett University e-Resources platform: [Refread](https://bennett.refread.com/#/home).\n\n"
-            "Here are some latest open access research articles:\n\n"
+            f"Sure! You can also explore latest journal articles and e-books on '**{topic_clean.title()}**' anytime at Bennett University e-Resources platform: [Refread](https://bennett.refread.com/#/home).\n\n"
+            f"Here are some recent open access research articles on **{topic_clean.title()}**:\n\n"
         )
-        results = core_article_search(topic, limit=20)
+        # CORE API results (10, sorted by most recent)
+        results = core_article_search(topic_clean, limit=20)
         results = sorted(results, key=lambda x: x.get("createdDate", ""), reverse=True)[:10]
         if not results:
             answer += (
@@ -206,25 +190,33 @@ def handle_user_query(prompt):
                 title = art.get("title", "No Title")
                 url = art.get("downloadUrl", art.get("urls", [{}])[0].get("url", "#"))
                 year = art.get("createdDate", "")[:4]
-                answer += f"- [{title}]({url}) {'('+year+')' if year else ''}\n"
+                author = ", ".join(a.get("name", "") for a in art.get("authors", [])[:3])
+                # Show title (link), author and year for smart ChatGPT-like look
+                answer += f"- [{title}]({url})"
+                if year or author:
+                    answer += " <span style='color:#999;font-size:12px'>"
+                    if author: answer += f"{author}"
+                    if author and year: answer += ", "
+                    if year: answer += f"{year}"
+                    answer += "</span>"
+                answer += "\n"
         return answer
+    # Book queries
+    elif "find books on" in prompt.lower() or "find book on" in prompt.lower():
+        topic = (
+            prompt.lower()
+            .replace("find books on", "")
+            .replace("find book on", "")
+            .strip()
+        )
+        opac_link = f"https://libraryopac.bennett.edu.in/"
+        return (
+            f"To find books on **{topic.title()}**, visit the Bennett University Library OPAC: [Search here]({opac_link}) "
+            "and enter your topic or book title in the search field. For digital books, explore e-resources at [Refread](https://bennett.refread.com/#/home)."
+        )
     else:
-        # Special: Guide for "find books" queries to OPAC
-        if "find books on" in prompt.lower() or "find book on" in prompt.lower():
-            topic = (
-                prompt.lower()
-                .replace("find books on", "")
-                .replace("find book on", "")
-                .strip()
-            )
-            opac_link = f"https://libraryopac.bennett.edu.in/"
-            return (
-                f"To find books on **{topic.title()}**, visit the Bennett University Library OPAC: [Search here]({opac_link}) "
-                "and enter your topic or book title in the search field. For digital books, explore e-resources at [Refread](https://bennett.refread.com/#/home)."
-            )
-        else:
-            payload = create_payload(prompt)
-            return call_gemini_api_v2(payload)
+        payload = create_payload(prompt)
+        return call_gemini_api_v2(payload)
 
 def show_quick_actions():
     quick_actions = [
@@ -265,7 +257,8 @@ def main():
 
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+            # Allow HTML for better article display
+            st.markdown(message["content"], unsafe_allow_html=True)
 
     st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
     prompt = st.chat_input("Type your query about books, research papers, journals, library services...")
