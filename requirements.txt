@@ -4,5 +4,3 @@ numpy
 scikit-learn
 sentence-transformers
 feedparser
-PyPDF2>=3.0.0
-pypdf>=3.8.0
