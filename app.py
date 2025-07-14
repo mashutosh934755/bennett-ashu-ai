@@ -31,10 +31,10 @@ openai.api_key = OPENAI_API_KEY
 # --- Custom CSS ---
 st.markdown("""
 <style>
-:root { --header-color: #2e86c1; }
-.main .block-container { max-width: 900px; padding: 2rem 1rem; }
-.profile-container { text-align: center; margin-bottom: 1rem; }
-.footer { text-align: center; color: #666; padding: 1rem; }
+:root {{ --header-color: #2e86c1; }}
+.main .block-container {{ max-width: 900px; padding: 2rem 1rem; }}
+.profile-container {{ text-align: center; margin-bottom: 1rem; }}
+.footer {{ text-align: center; color: #666; padding: 1rem; }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -80,57 +80,57 @@ chat_html = f"""
     <button id="sendBtn">Send</button>
   </div>
   <script>
-    const openaiClient = new OpenAI({ apiKey: '{api_key_js}' });
+    const openaiClient = new OpenAI({{ apiKey: '{api_key_js}' }});
     const chatEl = document.getElementById('chat');
     const textIn = document.getElementById('textIn');
     const sendBtn = document.getElementById('sendBtn');
     const voiceBtn = document.getElementById('voiceBtn');
 
     let recog;
-    if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
+    if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {{
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
       recog = new SR(); recog.lang = 'hi-IN'; recog.interimResults = false;
-      voiceBtn.onclick = () => { recog.start(); };
-      recog.onresult = (e) => { textIn.value = e.results[0][0].transcript; };
-    } else { voiceBtn.disabled = true; }
+      voiceBtn.onclick = () => {{ recog.start(); }};
+      recog.onresult = (e) => {{ textIn.value = e.results[0][0].transcript; }};
+    }} else {{ voiceBtn.disabled = true; }}
 
-    function appendMsg(text, cls) {
+    function appendMsg(text, cls) {{
       const d = document.createElement('div'); d.className = 'msg ' + cls; d.textContent = text;
       chatEl.appendChild(d); chatEl.scrollTop = chatEl.scrollHeight;
       if (cls === 'assistant') speak(text);
-    }
+    }}
 
-    function speak(text) {
+    function speak(text) {{
       if (!('speechSynthesis' in window)) return;
       const utt = new SpeechSynthesisUtterance(text); utt.lang = 'hi-IN'; speechSynthesis.speak(utt);
-    }
+    }}
 
-    async function sendMessage() {
+    async function sendMessage() {{
       const userText = textIn.value.trim(); if (!userText) return;
       appendMsg(userText, 'user'); textIn.value = '';
 
       const chatHistory = [], msgs = chatEl.querySelectorAll('.msg');
-      msgs.forEach(m => chatHistory.push({ role: m.classList.contains('user') ? 'user' : 'assistant', content: m.textContent }));
+      msgs.forEach(m => chatHistory.push({{ role: m.classList.contains('user') ? 'user' : 'assistant', content: m.textContent }}));
 
       const stream = await openaiClient.chat.completions.create(
-        { model: 'gpt-4o-mini', stream: true, messages: chatHistory }
+        {{ model: 'gpt-4o-mini', stream: true, messages: chatHistory }}
       );
 
       let assistantText = '';
-      for await (const chunk of stream) {
+      for await (const chunk of stream) {{
         const delta = chunk.choices[0].delta.content;
         if (delta) assistantText += delta;
         const lastMsg = chatEl.lastElementChild;
-        if (lastMsg && lastMsg.classList.contains('assistant')) {
+        if (lastMsg && lastMsg.classList.contains('assistant')) {{
           lastMsg.textContent = assistantText;
-        } else {
+        }} else {{
           appendMsg(assistantText, 'assistant');
-        }
-      }
-    }
+        }}
+      }}
+    }}
 
     sendBtn.onclick = sendMessage;
-    textIn.addEventListener('keypress', e => { if (e.key === 'Enter') sendMessage(); });
+    textIn.addEventListener('keypress', e => {{ if (e.key === 'Enter') sendMessage(); }});
   </script>
 </body>
 </html>
