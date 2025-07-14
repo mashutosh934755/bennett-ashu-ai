@@ -4,7 +4,7 @@ import os
 import logging
 import json
 import streamlit as st
-import openai  # pip install openai
+# import openai removed (using JS OpenAI client)
 from streamlit.components.v1 import html
 
 # --- Configuration ---
@@ -26,7 +26,7 @@ logging.basicConfig(
 OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
 if not OPENAI_API_KEY:
     st.error("Missing OpenAI API key. Set OPENAI_API_KEY in Streamlit secrets.")
-openai.api_key = OPENAI_API_KEY
+# openai.api_key assignment removed
 
 # --- Custom CSS ---
 st.markdown("""
