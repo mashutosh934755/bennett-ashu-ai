@@ -1,4 +1,3 @@
-```python
 # app.py
 
 import os
@@ -88,25 +87,25 @@ chat_html = f"""
     const voiceBtn = document.getElementById('voiceBtn');
 
     let recog;
-    if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {{
+    if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
       recog = new SR(); recog.lang = 'hi-IN'; recog.interimResults = false;
-      voiceBtn.onclick = () => {{ recog.start(); }};
-      recog.onresult = (e) => {{ textIn.value = e.results[0][0].transcript; }};
-    }} else {{ voiceBtn.disabled = true; }}
+      voiceBtn.onclick = () => { recog.start(); };
+      recog.onresult = (e) => { textIn.value = e.results[0][0].transcript; };
+    } else { voiceBtn.disabled = true; }
 
-    function appendMsg(text, cls) {{
+    function appendMsg(text, cls) {
       const d = document.createElement('div'); d.className = 'msg ' + cls; d.textContent = text;
       chatEl.appendChild(d); chatEl.scrollTop = chatEl.scrollHeight;
       if (cls === 'assistant') speak(text);
-    }}
+    }
 
-    function speak(text) {{
+    function speak(text) {
       if (!('speechSynthesis' in window)) return;
       const utt = new SpeechSynthesisUtterance(text); utt.lang = 'hi-IN'; speechSynthesis.speak(utt);
-    }}
+    }
 
-    async function sendMessage() {{
+    async function sendMessage() {
       const userText = textIn.value.trim(); if (!userText) return;
       appendMsg(userText, 'user'); textIn.value = '';
 
@@ -114,22 +113,24 @@ chat_html = f"""
       msgs.forEach(m => chatHistory.push({ role: m.classList.contains('user') ? 'user' : 'assistant', content: m.textContent }));
 
       const stream = await openaiClient.chat.completions.create(
-        {{ model: 'gpt-4o-mini', stream: true, messages: chatHistory }}
+        { model: 'gpt-4o-mini', stream: true, messages: chatHistory }
       );
 
       let assistantText = '';
-      for await (const chunk of stream) {{
+      for await (const chunk of stream) {
         const delta = chunk.choices[0].delta.content;
-        if (delta) {{ assistantText += delta; }}
-        // update last assistant bubble
+        if (delta) assistantText += delta;
         const lastMsg = chatEl.lastElementChild;
-        if (lastMsg && lastMsg.classList.contains('assistant')) {{ lastMsg.textContent = assistantText; }} 
-        else {{ appendMsg(assistantText, 'assistant'); }}
-      }}
-    }}
+        if (lastMsg && lastMsg.classList.contains('assistant')) {
+          lastMsg.textContent = assistantText;
+        } else {
+          appendMsg(assistantText, 'assistant');
+        }
+      }
+    }
 
     sendBtn.onclick = sendMessage;
-    textIn.addEventListener('keypress', e => {{ if (e.key === 'Enter') sendMessage(); }});
+    textIn.addEventListener('keypress', e => { if (e.key === 'Enter') sendMessage(); });
   </script>
 </body>
 </html>
@@ -142,5 +143,3 @@ ehtml = html(chat_html, height=550)
 st.markdown("""
 <div class="footer">© 2025 Ashutosh Mishra | Bennett University Library</div>
 """, unsafe_allow_html=True)
-
-```
