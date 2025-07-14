@@ -1,5 +1,3 @@
-# app.py
-
 import streamlit as st
 import requests
 import os
@@ -43,6 +41,7 @@ CSS_STYLES = """
     .footer { position: fixed; bottom: 0; left: 0; right: 0; text-align: center; color: #666; padding: 1rem; background-color: white; z-index: 99; }
 </style>
 """
+
 def inject_custom_css():
     st.markdown(CSS_STYLES, unsafe_allow_html=True)
 
@@ -63,6 +62,8 @@ def core_article_search(query, limit=5):
         return r.json().get("results", [])
     except:
         return []
+
+# (arxiv, doaj, datacite functions unchanged...)
 
 def arxiv_article_search(query, limit=5):
     try:
@@ -97,6 +98,7 @@ def doaj_article_search(query, limit=5):
         return out
     except:
         return []
+
 
 def datacite_article_search(query, limit=5):
     try:
@@ -149,29 +151,22 @@ def get_topic(prompt):
 # --- Main Query Handler ---
 def handle_query(q):
     ql = q.lower()
-    # BOOK SEARCH
     if "find book" in ql or "find books" in ql:
         topic = ql.split("on")[-1].strip()
         return f"To find books on **{topic.title()}**, visit [OPAC](https://libraryopac.bennett.edu.in/) or e-resources at [Refread](https://bennett.refread.com/#/home)."
-    # ARTICLE SEARCH
     kws = ["article","research","journal","पेपर","आर्टिकल"]
     if any(k in ql for k in kws):
         topic = get_topic(q)
         out = f"### e-Resources (Refread)\n- Search **{topic.title()}** at https://bennett.refread.com/#/home\n\n"
-        # CORE
         cr = core_article_search(topic)
-        out += "### CORE\n" + ("\n".join(f"- [{a['title']}]({a.get('downloadUrl',a['urls'][0]['url'])}) ({a['createdDate'][:4]})" for a in cr) or "No results") + "\n\n"
-        # arXiv
+        out += "### CORE\n" + ("\n".join(f"- [{a['title']}]({a.get('downloadUrl',a['urls'][0]['url'])}) ({a.get('createdDate','')[:4]})" for a in cr) or "No results") + "\n\n"
         ar = arxiv_article_search(topic)
         out += "### arXiv\n" + ("\n".join(f"- [{a['title']}]({a['url']}) ({a['year']})" for a in ar) or "No results") + "\n\n"
-        # DOAJ
         dj = doaj_article_search(topic)
         out += "### DOAJ\n" + ("\n".join(f"- [{a['title']}]({a['url']}) ({a['year']})" for a in dj) or "No results") + "\n\n"
-        # DataCite
         dc = datacite_article_search(topic)
         out += "### DataCite\n" + ("\n".join(f"- [{a['title']}]({a['url']}) ({a['year']})" for a in dc) or "No results")
         return out
-    # FALLBACK TO GEMINI
     return call_gemini(create_payload(q))
 
 # --- Quick Actions ---
@@ -198,14 +193,15 @@ books = [
 ]
 books_json = json.dumps(books, ensure_ascii=False)
 
-voice_catalog_html = f"""
+voice_catalog_html = (
+    """
 <style>
-.controls {{ display:flex; justify-content:center; gap:0.5rem; margin-bottom:1rem; }}
-.controls input, .controls button {{ padding:0.5rem; font-size:1rem; }}
-.controls button {{ cursor:pointer; }}
-#bookGrid {{ display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:1rem; }}
-.book-card {{ background:#fff; border-radius:4px; padding:0.5rem; box-shadow:0 1px 3px rgba(0,0,0,0.1); }}
-.book-card h3 {{ font-size:1.1rem; margin-bottom:0.3rem; }}
+.controls { display:flex; justify-content:center; gap:0.5rem; margin-bottom:1rem; }
+.controls input, .controls button { padding:0.5rem; font-size:1rem; }
+.controls button { cursor:pointer; }
+#bookGrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:1rem; }
+.book-card { background:#fff; border-radius:4px; padding:0.5rem; box-shadow:0 1px 3px rgba(0,0,0,0.1); }
+.book-card h3 { font-size:1.1rem; margin-bottom:0.3rem; }
 </style>
 <header>
   <h2 style="text-align:center;">वॉइस-एक्टिवेटेड कैटलॉग</h2>
@@ -216,45 +212,47 @@ voice_catalog_html = f"""
 </header>
 <main id="bookGrid"></main>
 <script>
-const books = {books_json};
-function renderBooks(list){{
-  const grid = document.getElementById("bookGrid");
-  grid.innerHTML = "";
-  if(!list.length){ grid.innerHTML="<p>कोई किताब नहीं मिली।</p>"; return; }
-  list.forEach(b=>{{
-    let c=document.createElement("div"); c.className="book-card";
-    c.innerHTML=`<h3>${{b.title}}</h3>
-                 <p><strong>लेखक:</strong> ${{b.author}}</p>
-                 <p><strong>शैली:</strong> ${{b.genre}}</p>`;
-    grid.appendChild(c);
-  }});
-}}
-function applyFilters(q){{
-  const txt=q.trim().toLowerCase();
-  return books.filter(b=>
-    b.title.toLowerCase().includes(txt)||
-    b.author.toLowerCase().includes(txt)||
-    b.genre.toLowerCase().includes(txt)
-  );
-}}
-function speak(t){{
-  if(!("speechSynthesis" in window))return;
-  let u=new SpeechSynthesisUtterance(t); u.lang="hi-IN"; speechSynthesis.speak(u);
-}}
-document.getElementById("voiceBtn").onclick=()=>{
-  let SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!SR){ alert("ब्राउज़र समर्थित नहीं, Chrome आज़माएँ"); return; }
-  let r=new SR(); r.lang="hi-IN"; r.interimResults=false; r.maxAlternatives=1; r.start();
-  r.onresult=e=>{ let txt=e.results[0][0].transcript;
-    document.getElementById("searchInput").value=txt;
-    let res=applyFilters(txt); renderBooks(res);
-    speak(`मिला ${{res.length}} परिणाम`);
-  };
+const books = """ + books_json + """;
+function renderBooks(list) {
+    const grid = document.getElementById('bookGrid');
+    grid.innerHTML = '';
+    if (!list.length) { grid.innerHTML = '<p>कोई किताब नहीं मिली।</p>'; return; }
+    list.forEach(b => {
+        const c = document.createElement('div'); c.className = 'book-card';
+        c.innerHTML = `<h3>${b.title}</h3><p><strong>लेखक:</strong> ${b.author}</p><p><strong>शैली:</strong> ${b.genre}</p>`;
+        grid.appendChild(c);
+    });
+}
+function applyFilters(q) {
+    const txt = q.trim().toLowerCase();
+    return books.filter(b => 
+        b.title.toLowerCase().includes(txt) ||
+        b.author.toLowerCase().includes(txt) ||
+        b.genre.toLowerCase().includes(txt)
+    );
+}
+function speak(t) {
+    if (!('speechSynthesis' in window)) return;
+    const u = new SpeechSynthesisUtterance(t);
+    u.lang = 'hi-IN'; speechSynthesis.speak(u);
+}
+document.getElementById('voiceBtn').onclick = function() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { alert('ब्राउज़र समर्थित नहीं, Chrome आज़माएँ'); return; }
+    const r = new SR(); r.lang = 'hi-IN'; r.interimResults = false; r.maxAlternatives = 1; r.start();
+    r.onresult = function(e) {
+        const txt = e.results[0][0].transcript;
+        document.getElementById('searchInput').value = txt;
+        const res = applyFilters(txt);
+        renderBooks(res);
+        speak(`मिला ${res.length} परिणाम`);
+    };
 };
-document.getElementById("searchInput").oninput=e=>renderBooks(applyFilters(e.target.value));
+document.getElementById('searchInput').oninput = function(e) { renderBooks(applyFilters(e.target.value)); };
 renderBooks(books);
 </script>
-"""
+    """
+)
 
 # --- Streamlit App ---
 def main():
@@ -269,7 +267,7 @@ def main():
     """, unsafe_allow_html=True)
 
     show_quick_actions()
-    st.components.v1.html(voice_catalog_html, height=600)
+    html(voice_catalog_html, height=600)
 
     st.markdown("## 🤖 AI Chat Assistant")
     if "msgs" not in st.session_state:
