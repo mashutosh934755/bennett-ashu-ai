@@ -1,31 +1,15 @@
 import streamlit as st
 import requests
-import os
-import logging
 import re
 import feedparser  # pip install feedparser
 
-st.set_page_config(
-    page_title="Ashu AI @ BU Library",
-    page_icon="https://play-lh.googleusercontent.com/kCXMe_CDJaLcEb_Ax8hoSo9kfqOmeB7VoB4zNI5dCSAD8QSeNZE1Eow4NBXx-NjTDQ",
-    layout="centered",
-    initial_sidebar_state="collapsed"
-)
+# ==== CONFIG (Replace keys if needed) ====
+GEMINI_API_KEY = "AIzaSyAN0bwvid52NGxuqaSWaFKnzI9upiXNyBM"
+CORE_API_KEY = "c4XC81RUxhfjOKI5HeSFJvqQtM32TzAd"
+GOOGLE_BOOKS_API_KEY = "AIzaSyBzEuqt49WQUHbj1nMGyzMXDtkfuOLRQcU"
 
-logging.basicConfig(
-    filename='app.log',
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
-
-GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
-CORE_API_KEY = st.secrets.get("CORE_API_KEY", os.getenv("CORE_API_KEY"))
-GOOGLE_BOOKS_API_KEY = st.secrets.get("GOOGLE_BOOKS_API_KEY", os.getenv("GOOGLE_BOOKS_API_KEY"))
-
-GEMINI_API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-CORE_API_ENDPOINT = "https://api.core.ac.uk/v3/search/works"
-
-CSS_STYLES = """
+# ==== CSS ====
+st.markdown("""
 <style>
     :root { --header-color: #2e86c1; }
     .main .block-container { max-width: 900px; padding: 2rem 1rem; }
@@ -43,49 +27,53 @@ CSS_STYLES = """
         .static-chat-input { max-width: 98vw; }
     }
 </style>
-"""
-def inject_custom_css():
-    st.markdown(CSS_STYLES, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
+# ==== QUICK ACTION BUTTONS ====
 def create_quick_action_button(text, url):
     return f'<a href="{url}" target="_blank" class="quick-action-btn">{text}</a>'
 
-# -------------- Google Books API --------------
+def show_quick_actions():
+    quick_actions = [
+        ("Find e-Resources", "https://bennett.refread.com/#/home"),
+        ("Find Books", "https://libraryopac.bennett.edu.in/"),
+        ("Working Hours", "https://library.bennett.edu.in/index.php/working-hours/"),
+        ("Book GD Rooms", "http://10.6.0.121/gdroombooking/")
+    ]
+    st.markdown(
+        '<div class="quick-actions-row">' +
+        "".join([create_quick_action_button(t, u) for t, u in quick_actions]) +
+        '</div>',
+        unsafe_allow_html=True
+    )
+
+# ==== API FUNCTIONS ====
 def google_books_search(query, limit=5):
-    API_KEY = GOOGLE_BOOKS_API_KEY
-    if not API_KEY:
-        return []
-    url = f"https://www.googleapis.com/books/v1/volumes?q={query}&maxResults={limit}&key={API_KEY}"
+    url = f"https://www.googleapis.com/books/v1/volumes?q={query}&maxResults={limit}&key={GOOGLE_BOOKS_API_KEY}"
     try:
         resp = requests.get(url, timeout=10)
-        if resp.status_code == 200:
-            items = resp.json().get("items", [])
-            result = []
-            for item in items:
-                volume = item.get("volumeInfo", {})
-                title = volume.get("title", "No Title")
-                authors = ", ".join(volume.get("authors", []))
-                link = volume.get("infoLink", "#")
-                publisher = volume.get("publisher", "")
-                year = volume.get("publishedDate", "")[:4]
-                result.append({
-                    "title": title,
-                    "authors": authors,
-                    "url": link,
-                    "publisher": publisher,
-                    "year": year
-                })
-            return result
-        else:
-            return []
-    except Exception:
+        items = resp.json().get("items", [])
+        result = []
+        for item in items:
+            volume = item.get("volumeInfo", {})
+            title = volume.get("title", "No Title")
+            authors = ", ".join(volume.get("authors", []))
+            link = volume.get("infoLink", "#")
+            publisher = volume.get("publisher", "")
+            year = volume.get("publishedDate", "")[:4]
+            result.append({
+                "title": title,
+                "authors": authors,
+                "url": link,
+                "publisher": publisher,
+                "year": year
+            })
+        return result
+    except Exception as e:
         return []
 
-# -------------- Article APIs --------------
 def core_article_search(query, limit=5):
-    if not CORE_API_KEY:
-        return []
-    url = f"{CORE_API_ENDPOINT}"
+    url = "https://api.core.ac.uk/v3/search/works"
     headers = {"Authorization": f"Bearer {CORE_API_KEY}"}
     params = {"q": query, "limit": limit}
     try:
@@ -153,7 +141,6 @@ def datacite_article_search(query, limit=5):
     except Exception:
         return []
 
-# -------------- Gemini fallback --------------
 def create_payload(prompt):
     system_instruction = (
         "You are Ashu, an AI assistant for Bennett University Library. "
@@ -192,12 +179,10 @@ def create_payload(prompt):
     }
 
 def call_gemini_api_v2(payload):
-    if not GEMINI_API_KEY:
-        logging.error("Gemini API Key is missing.")
-        return "Gemini API Key is missing. Please set it as a secret in Streamlit Cloud."
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
     try:
         response = requests.post(
-            GEMINI_API_ENDPOINT,
+            url,
             json=payload,
             headers={
                 "Content-Type": "application/json",
@@ -206,37 +191,28 @@ def call_gemini_api_v2(payload):
             timeout=15
         )
         if response.status_code == 200:
-            try:
-                candidates = response.json().get("candidates", [{}])
-                answer = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "No answer found.")
-                logging.info("Gemini API success: %s", answer[:100])
-            except Exception as e:
-                logging.error(f"Error parsing response: {e}")
-                answer = "An error occurred while processing your request."
+            candidates = response.json().get("candidates", [{}])
+            answer = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "No answer found.")
+            return answer
         else:
-            answer = f"Connection error: {response.status_code} - {response.text}"
-            logging.error(answer)
-    except requests.RequestException as e:
-        answer = "A network error occurred. Please try again later."
-        logging.error(f"Network/API error: {e}")
-    return answer
+            return f"Connection error: {response.status_code} - {response.text}"
+    except Exception as e:
+        return "A network error occurred. Please try again later."
 
-# -------------- Topic Extraction (Hindi/English both) --------------
+# ==== Topic Extraction ====
 def get_topic_from_prompt(prompt):
-    # Hindi/English topic extraction
     pattern = r"(?:on|par|about|ke bare mein|पर|के बारे में|का|की)\s+([a-zA-Z0-9\-अ-ह ]+)"
     match = re.search(pattern, prompt, re.IGNORECASE)
     if match:
         return match.group(1).strip()
-    # Fallback: last word
     words = prompt.strip().split()
     if len(words) > 1:
         return words[-2] if words[-1].lower() in ["articles", "पर", "on"] else words[-1]
     return prompt.strip()
 
-# -------------- Main Handler --------------
+# ==== Main Handler ====
 def handle_user_query(prompt):
-    # Book search (priority check)
+    # Book search
     if "find books on" in prompt.lower() or "find book on" in prompt.lower():
         topic = (
             prompt.lower()
@@ -244,13 +220,20 @@ def handle_user_query(prompt):
             .replace("find book on", "")
             .strip()
         )
-        opac_link = f"https://libraryopac.bennett.edu.in/"
-        return (
-            f"To find books on **{topic.title()}**, visit the Bennett University Library OPAC: [Search here]({opac_link}) "
-            "and enter your topic or book title in the search field. For digital books, explore e-resources at [Refread](https://bennett.refread.com/#/home)."
-        )
+        books = google_books_search(topic, limit=5)
+        answer = f"### 📚 Books on **{topic.title()}** (Google Books)\n"
+        if books:
+            for book in books:
+                authors = f" by {book['authors']}" if book['authors'] else ""
+                pub = f", {book['publisher']}" if book['publisher'] else ""
+                year = f" ({book['year']})" if book['year'] else ""
+                answer += f"- [{book['title']}]({book['url']}){authors}{pub}{year}\n"
+        else:
+            answer += "No relevant books found from Google Books.\n"
+        answer += f"\n**For more, search [BU OPAC](https://libraryopac.bennett.edu.in/) or [Refread](https://bennett.refread.com/#/home).**"
+        return answer
 
-    # ARTICLE SEARCH (Hindi/English: topic detection)
+    # Article/research paper/journal
     article_keywords = [
         "article", "articles", "research paper", "journal", "preprint", "open access", "dataset", "साहित्य", "आर्टिकल", "पत्रिका", "जर्नल", "शोध", "पेपर"
     ]
@@ -264,7 +247,7 @@ def handle_user_query(prompt):
         answer += f"Find e-books and journal articles on **'{topic.title()}'** 24/7 here: [Refread](https://bennett.refread.com/#/home)\n\n"
 
         # GOOGLE BOOKS
-        google_books = google_books_search(topic, limit=5)
+        google_books = google_books_search(topic, limit=3)
         answer += "### 📚 Books from Google Books\n"
         if google_books:
             for book in google_books:
@@ -276,11 +259,10 @@ def handle_user_query(prompt):
             answer += "No relevant books found from Google Books.\n"
 
         # CORE
-        core_results = core_article_search(topic, limit=5)
+        core_results = core_article_search(topic, limit=3)
         answer += "### 🌐 Open Access (CORE)\n"
         if core_results:
-            core_results = sorted(core_results, key=lambda x: x.get("createdDate", ""), reverse=True)
-            for art in core_results[:5]:
+            for art in core_results:
                 title = art.get("title", "No Title")
                 url = art.get("downloadUrl", art.get("urls", [{}])[0].get("url", "#"))
                 year = art.get("createdDate", "")[:4]
@@ -289,7 +271,7 @@ def handle_user_query(prompt):
             answer += "No recent articles found on this topic from CORE.\n"
 
         # arXiv
-        arxiv_results = arxiv_article_search(topic, limit=5)
+        arxiv_results = arxiv_article_search(topic, limit=3)
         answer += "### 📄 Preprints (arXiv)\n"
         if arxiv_results:
             for art in arxiv_results:
@@ -298,7 +280,7 @@ def handle_user_query(prompt):
             answer += "No recent preprints found on this topic from arXiv.\n"
 
         # DOAJ
-        doaj_results = doaj_article_search(topic, limit=5)
+        doaj_results = doaj_article_search(topic, limit=3)
         answer += "### 📚 Open Access Journals (DOAJ)\n"
         if doaj_results:
             for art in doaj_results:
@@ -307,7 +289,7 @@ def handle_user_query(prompt):
             answer += "No open access journal articles found on this topic from DOAJ.\n"
 
         # DataCite
-        datacite_results = datacite_article_search(topic, limit=5)
+        datacite_results = datacite_article_search(topic, limit=3)
         answer += "### 🏷️ Research Data/Articles (DataCite)\n"
         if datacite_results:
             for art in datacite_results:
@@ -317,71 +299,52 @@ def handle_user_query(prompt):
 
         return answer
 
-    # Else: General Gemini (FAQ etc)
+    # General (FAQ etc) - Gemini
     payload = create_payload(prompt)
     return call_gemini_api_v2(payload)
 
-def show_quick_actions():
-    quick_actions = [
-        ("Find e-Resources", "https://bennett.refread.com/#/home"),
-        ("Find Books", "https://libraryopac.bennett.edu.in/"),
-        ("Working Hours", "https://library.bennett.edu.in/index.php/working-hours/"),
-        ("Book GD Rooms", "http://10.6.0.121/gdroombooking/")
-    ]
-    st.markdown(
-        '<div class="quick-actions-row">' +
-        "".join([create_quick_action_button(t, u) for t, u in quick_actions]) +
-        '</div>',
-        unsafe_allow_html=True
-    )
-
+# ==== MAIN UI ====
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-def main():
-    inject_custom_css()
+st.markdown("""
+<div class="profile-container">
+    <img src="https://library.bennett.edu.in/wp-content/uploads/2024/05/WhatsApp-Image-2024-05-01-at-12.41.02-PM-e1714549052999-150x150.jpeg" 
+         width="150" 
+         style="border-radius: 50%; border: 3px solid #2e86c1; margin-bottom: 1rem;">
+    <h1 style="color: #2e86c1; margin-bottom: 0.5rem; font-size: 2em;">Ashu AI Assistant at Bennett University Library</h1>
+</div>
+""", unsafe_allow_html=True)
 
-    st.markdown("""
-    <div class="profile-container">
-        <img src="https://library.bennett.edu.in/wp-content/uploads/2024/05/WhatsApp-Image-2024-05-01-at-12.41.02-PM-e1714549052999-150x150.jpeg" 
-             width="150" 
-             style="border-radius: 50%; border: 3px solid #2e86c1; margin-bottom: 1rem;">
-        <h1 style="color: #2e86c1; margin-bottom: 0.5rem; font-size: 2em;">Ashu AI Assistant at Bennett University Library</h1>
+show_quick_actions()
+
+st.markdown("""
+<div style="text-align: center; margin: 2rem 0;">
+    <p style="font-size: 1.1em;">Hello! I am Ashu, your AI assistant at Bennett University Library. How can I help you today?<br>
+</div>
+""", unsafe_allow_html=True)
+
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
+prompt = st.chat_input("Type your query about books, research papers, journals, library services...")
+
+if prompt:
+    st.session_state.messages.append({"role": "user", "content": prompt})
+
+    with st.spinner("Ashu is typing..."):
+        answer = handle_user_query(prompt)
+
+    st.session_state.messages.append({"role": "assistant", "content": answer})
+    st.rerun()
+st.markdown('</div>', unsafe_allow_html=True)
+
+st.markdown("""
+<div class="footer">
+    <div style="margin: 0.5rem 0;">
+        © 2025 - Ashutosh Mishra | All Rights Reserved
     </div>
-    """, unsafe_allow_html=True)
-
-    show_quick_actions()
-
-    st.markdown("""
-    <div style="text-align: center; margin: 2rem 0;">
-        <p style="font-size: 1.1em;">Hello! I am Ashu, your AI assistant at Bennett University Library. How can I help you today?<br>
-    </div>
-    """, unsafe_allow_html=True)
-
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-
-    st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
-    prompt = st.chat_input("Type your query about books, research papers, journals, library services...")
-
-    if prompt:
-        st.session_state.messages.append({"role": "user", "content": prompt})
-
-        with st.spinner("Ashu is typing..."):
-            answer = handle_user_query(prompt)
-
-        st.session_state.messages.append({"role": "assistant", "content": answer})
-        st.rerun()
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    st.markdown("""
-    <div class="footer">
-        <div style="margin: 0.5rem 0;">
-            © 2025 - Ashutosh Mishra | All Rights Reserved
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-if __name__ == "__main__":
-    main()
+</div>
+""", unsafe_allow_html=True)
