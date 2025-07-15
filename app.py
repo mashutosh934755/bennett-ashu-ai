@@ -3,7 +3,7 @@ import requests
 from requests.auth import HTTPBasicAuth
 
 # ---- Koha API credentials & URL ----
-KOHA_API_BASE = "http://192.168.31.128:8081/api/v1"
+KOHA_API_BASE = "http://192.168.31.128:8081/api/v1/patrons/"
 KOHA_USER = "ashutosh"
 KOHA_PASS = "#Ashu12!@"
 
