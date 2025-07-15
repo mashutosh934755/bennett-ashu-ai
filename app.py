@@ -49,6 +49,35 @@ def inject_custom_css():
 def create_quick_action_button(text, url):
     return f'<a href="{url}" target="_blank" class="quick-action-btn">{text}</a>'
 
+# -------------- Google Books API --------------
+def google_books_search(query, limit=5):
+    API_KEY = "AIzaSyBzEuqt49WQUHbj1nMGyzMXDtkfuOLRQcU"
+    url = f"https://www.googleapis.com/books/v1/volumes?q={query}&maxResults={limit}&key={API_KEY}"
+    try:
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 200:
+            items = resp.json().get("items", [])
+            result = []
+            for item in items:
+                volume = item.get("volumeInfo", {})
+                title = volume.get("title", "No Title")
+                authors = ", ".join(volume.get("authors", []))
+                link = volume.get("infoLink", "#")
+                publisher = volume.get("publisher", "")
+                year = volume.get("publishedDate", "")[:4]
+                result.append({
+                    "title": title,
+                    "authors": authors,
+                    "url": link,
+                    "publisher": publisher,
+                    "year": year
+                })
+            return result
+        else:
+            return []
+    except Exception:
+        return []
+
 # -------------- Article APIs --------------
 def core_article_search(query, limit=5):
     if not CORE_API_KEY:
@@ -227,10 +256,22 @@ def handle_user_query(prompt):
         if not topic or len(topic) < 2:
             return "Please specify a topic for article search. उदाहरण: 'articles on AI' या 'हिंदी साहित्य पर articles'।"
         topic = topic.strip()
-        
+
         answer = f"### 🟦 Bennett University e-Resources (Refread)\n"
         answer += f"Find e-books and journal articles on **'{topic.title()}'** 24/7 here: [Refread](https://bennett.refread.com/#/home)\n\n"
-        
+
+        # GOOGLE BOOKS
+        google_books = google_books_search(topic, limit=5)
+        answer += "### 📚 Books from Google Books\n"
+        if google_books:
+            for book in google_books:
+                authors = f" by {book['authors']}" if book['authors'] else ""
+                pub = f", {book['publisher']}" if book['publisher'] else ""
+                year = f" ({book['year']})" if book['year'] else ""
+                answer += f"- [{book['title']}]({book['url']}){authors}{pub}{year}\n"
+        else:
+            answer += "No relevant books found from Google Books.\n"
+
         # CORE
         core_results = core_article_search(topic, limit=5)
         answer += "### 🌐 Open Access (CORE)\n"
