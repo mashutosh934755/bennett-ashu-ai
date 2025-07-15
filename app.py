@@ -3,10 +3,10 @@ import requests
 import re
 import feedparser  # pip install feedparser
 
-# ==== CONFIG (Replace keys if needed) ====
-GEMINI_API_KEY = "AIzaSyAN0bwvid52NGxuqaSWaFKnzI9upiXNyBM"
-CORE_API_KEY = "c4XC81RUxhfjOKI5HeSFJvqQtM32TzAd"
-GOOGLE_BOOKS_API_KEY = "AIzaSyBzEuqt49WQUHbj1nMGyzMXDtkfuOLRQcU"
+# ==== GET KEYS FROM SECRETS (never paste in code) ====
+GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
+CORE_API_KEY = st.secrets.get("CORE_API_KEY", "")
+GOOGLE_BOOKS_API_KEY = st.secrets.get("GOOGLE_BOOKS_API_KEY", "")
 
 # ==== CSS ====
 st.markdown("""
@@ -29,7 +29,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ==== QUICK ACTION BUTTONS ====
+# ==== BUTTONS ====
 def create_quick_action_button(text, url):
     return f'<a href="{url}" target="_blank" class="quick-action-btn">{text}</a>'
 
@@ -49,6 +49,8 @@ def show_quick_actions():
 
 # ==== API FUNCTIONS ====
 def google_books_search(query, limit=5):
+    if not GOOGLE_BOOKS_API_KEY:
+        return []
     url = f"https://www.googleapis.com/books/v1/volumes?q={query}&maxResults={limit}&key={GOOGLE_BOOKS_API_KEY}"
     try:
         resp = requests.get(url, timeout=10)
@@ -73,6 +75,8 @@ def google_books_search(query, limit=5):
         return []
 
 def core_article_search(query, limit=5):
+    if not CORE_API_KEY:
+        return []
     url = "https://api.core.ac.uk/v3/search/works"
     headers = {"Authorization": f"Bearer {CORE_API_KEY}"}
     params = {"q": query, "limit": limit}
@@ -179,6 +183,8 @@ def create_payload(prompt):
     }
 
 def call_gemini_api_v2(payload):
+    if not GEMINI_API_KEY:
+        return "Gemini API Key is missing. Please set it in Streamlit secrets."
     url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
     try:
         response = requests.post(
@@ -199,7 +205,6 @@ def call_gemini_api_v2(payload):
     except Exception as e:
         return "A network error occurred. Please try again later."
 
-# ==== Topic Extraction ====
 def get_topic_from_prompt(prompt):
     pattern = r"(?:on|par|about|ke bare mein|पर|के बारे में|का|की)\s+([a-zA-Z0-9\-अ-ह ]+)"
     match = re.search(pattern, prompt, re.IGNORECASE)
@@ -210,7 +215,6 @@ def get_topic_from_prompt(prompt):
         return words[-2] if words[-1].lower() in ["articles", "पर", "on"] else words[-1]
     return prompt.strip()
 
-# ==== Main Handler ====
 def handle_user_query(prompt):
     # Book search
     if "find books on" in prompt.lower() or "find book on" in prompt.lower():
@@ -303,7 +307,6 @@ def handle_user_query(prompt):
     payload = create_payload(prompt)
     return call_gemini_api_v2(payload)
 
-# ==== MAIN UI ====
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
@@ -320,7 +323,7 @@ show_quick_actions()
 
 st.markdown("""
 <div style="text-align: center; margin: 2rem 0;">
-    <p style="font-size: 1.1em;">Hello! I am Ashu, your AI assistant at Bennett University Library. How can I help you today?<br>
+    <p style="font-size: 1.1em;">Hello! I am Ashu, your AI assistant at Bennett University Library. How can I help you today?</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -333,10 +336,8 @@ prompt = st.chat_input("Type your query about books, research papers, journals, 
 
 if prompt:
     st.session_state.messages.append({"role": "user", "content": prompt})
-
     with st.spinner("Ashu is typing..."):
         answer = handle_user_query(prompt)
-
     st.session_state.messages.append({"role": "assistant", "content": answer})
     st.rerun()
 st.markdown('</div>', unsafe_allow_html=True)
