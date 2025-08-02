@@ -1,8 +1,8 @@
 streamlit
-pandas
-numpy
-scikit-learn
-sentence-transformers
-feedparser
-gtts
 streamlit-mic-recorder==0.0.8
+gtts
+sentence-transformers
+scikit-learn
+numpy
+pandas
+requests
