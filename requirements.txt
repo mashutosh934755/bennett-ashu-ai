@@ -4,3 +4,5 @@ numpy
 scikit-learn
 sentence-transformers
 feedparser
+gtts
+streamlit-mic-recorder==0.0.8
