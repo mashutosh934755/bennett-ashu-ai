@@ -2,18 +2,23 @@ import streamlit as st
 import requests
 import re
 import feedparser  # pip install feedparser
-import urllib.parse  # NEW
+import urllib.parse
+import csv
+from io import StringIO
 
 # ==== GET KEYS FROM SECRETS (never paste in code) ====
-GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
-CORE_API_KEY = st.secrets.get("CORE_API_KEY", "")
-GOOGLE_BOOKS_API_KEY = st.secrets.get("GOOGLE_BOOKS_API_KEY", "")
+GEMINI_API_KEY        = st.secrets.get("GEMINI_API_KEY", "")
+CORE_API_KEY          = st.secrets.get("CORE_API_KEY", "")
+GOOGLE_BOOKS_API_KEY  = st.secrets.get("GOOGLE_BOOKS_API_KEY", "")
 
-# Koha (NEW - all from secrets)
-KOHA_BASE_URL = st.secrets.get("KOHA_BASE_URL", "")  # e.g. http://10.6.0.105:8080/api/v1
-KOHA_CLIENT_ID = st.secrets.get("KOHA_CLIENT_ID", "")
-KOHA_CLIENT_SECRET = st.secrets.get("KOHA_CLIENT_SECRET", "")
-KOHA_OPAC_BASE = st.secrets.get("KOHA_OPAC_BASE", "https://libraryopac.bennett.edu.in")
+# Koha (internal)
+KOHA_BASE_URL         = st.secrets.get("KOHA_BASE_URL", "")     # e.g. http://10.6.0.105:8080/api/v1
+KOHA_CLIENT_ID        = st.secrets.get("KOHA_CLIENT_ID", "")
+KOHA_CLIENT_SECRET    = st.secrets.get("KOHA_CLIENT_SECRET", "")
+KOHA_OPAC_BASE        = st.secrets.get("KOHA_OPAC_BASE", "https://libraryopac.bennett.edu.in")
+
+# Koha REPORT IDs (IMPORTANT)
+KOHA_REPORT_AI_ID     = st.secrets.get("KOHA_REPORT_AI_ID", "")  # <-- put your saved report id here (e.g. "123")
 
 # ==== CSS ====
 st.markdown("""
@@ -24,7 +29,6 @@ st.markdown("""
     .quick-actions-row { display: flex; justify-content: center; gap: 10px; margin: 1rem 0 2rem 0; width: 100%; }
     .quick-action-btn { background-color: #2e86c1; color: white !important; padding: 10px 15px; border-radius: 20px; border: none; box-shadow: 0 2px 5px rgba(0,0,0,0.1); transition: all 0.3s; font-size: 14px; text-decoration: none; text-align: center; cursor: pointer; white-space: nowrap; flex: 1; max-width: 200px; }
     .quick-action-btn:hover { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.15); }
-    .chat-container { margin: 2rem 0; }
     .static-chat-input { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); width: 100%; max-width: 800px; z-index: 100; }
     .stChatInput input { border-radius: 25px !important; padding: 12px 20px !important; }
     .stChatInput button { border-radius: 50% !important; background-color: var(--header-color) !important; }
@@ -54,7 +58,7 @@ def show_quick_actions():
         unsafe_allow_html=True
     )
 
-# ==== API FUNCTIONS ====
+# ==== External APIs ====
 def google_books_search(query, limit=5):
     if not GOOGLE_BOOKS_API_KEY:
         return []
@@ -71,11 +75,8 @@ def google_books_search(query, limit=5):
             publisher = volume.get("publisher", "")
             year = volume.get("publishedDate", "")[:4]
             result.append({
-                "title": title,
-                "authors": authors,
-                "url": link,
-                "publisher": publisher,
-                "year": year
+                "title": title, "authors": authors, "url": link,
+                "publisher": publisher, "year": year
             })
         return result
     except Exception:
@@ -91,8 +92,7 @@ def core_article_search(query, limit=5):
         r = requests.get(url, headers=headers, params=params, timeout=15)
         if r.status_code == 200:
             return r.json().get("results", [])
-        else:
-            return []
+        return []
     except Exception:
         return []
 
@@ -127,8 +127,7 @@ def doaj_article_search(query, limit=5):
                 year = bibjson.get("year", "")
                 result.append({"title": title, "url": link, "journal": journal, "year": year})
             return result
-        else:
-            return []
+        return []
     except Exception:
         return []
 
@@ -147,12 +146,11 @@ def datacite_article_search(query, limit=5):
                 year = attrs.get("publicationYear", "")
                 result.append({"title": title, "url": url2, "journal": publisher, "year": year})
             return result
-        else:
-            return []
+        return []
     except Exception:
         return []
 
-# ==== KOHA HELPERS (NEW) ====
+# ==== Koha OAuth token ====
 def koha_get_token():
     if not (KOHA_BASE_URL and KOHA_CLIENT_ID and KOHA_CLIENT_SECRET):
         return None
@@ -173,60 +171,33 @@ def koha_get_token():
         pass
     return None
 
-def _koha_try(url, headers):
-    try:
-        resp = requests.get(url, headers=headers, timeout=20)
-        if resp.status_code >= 400:
-            # return status and small body for debugging/telemetry if needed
-            return None, resp.status_code, resp.text[:400]
-        data = resp.json()
-        if isinstance(data, list):
-            return data, resp.status_code, None
-        return [], resp.status_code, None
-    except Exception as e:
-        return None, 0, str(e)
-
-def koha_search_biblios(query, limit=5):
+# ==== Koha Reports API: Run “AI Books” report and return JSON rows ====
+def koha_ai_books():
     """
-    Tries multiple query styles (because your Koha previously rejected q=/search= and pagination).
-    Always returns an OPAC link so the user can click-through.
+    Calls Koha Reports REST API to get all 'Artificial Intelligence' books from your saved report.
+    Shows table + CSV download in chat.
     """
-    opac_link = f"{KOHA_OPAC_BASE}/cgi-bin/koha/opac-search.pl?idx=ti&q={urllib.parse.quote(query)}"
-
-    if not KOHA_BASE_URL:
-        return {"records": [], "opac_url": opac_link}
+    if not (KOHA_BASE_URL and KOHA_REPORT_AI_ID):
+        return {"ok": False, "msg": "Koha base URL or KOHA_REPORT_AI_ID missing in secrets.", "rows": []}
 
     token = koha_get_token()
     if not token:
-        return {"records": [], "opac_url": opac_link}
+        return {"ok": False, "msg": "Koha OAuth token failed. Check CLIENT_ID/SECRET in secrets.", "rows": []}
 
-    hdr = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-    q_plain = urllib.parse.quote(query)
-    q_quoted = urllib.parse.quote(f"\"{query}\"")
+    headers_json = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    try:
+        url = f"{KOHA_BASE_URL}/reports/{KOHA_REPORT_AI_ID}/run"
+        r = requests.get(url, headers=headers_json, timeout=120)
+        if r.status_code != 200:
+            return {"ok": False, "msg": f"Reports API error: {r.status_code} - {r.text[:300]}", "rows": []}
+        rows = r.json()
+        if not isinstance(rows, list):
+            return {"ok": False, "msg": "Unexpected report format.", "rows": []}
+        return {"ok": True, "msg": f"Found {len(rows)} AI books.", "rows": rows}
+    except Exception as e:
+        return {"ok": False, "msg": "Network error while hitting Reports API.", "rows": []}
 
-    candidates = [
-        f"{KOHA_BASE_URL}/biblios?q=title,contains,{q_plain}",
-        f"{KOHA_BASE_URL}/biblios?q=any,contains,{q_plain}",
-        f"{KOHA_BASE_URL}/biblios?q=title,contains,{q_quoted}",
-        f"{KOHA_BASE_URL}/biblios?search={q_plain}",
-        # last resort (no params): will return default batch; we’ll still map first few
-        f"{KOHA_BASE_URL}/biblios",
-    ]
-
-    for url in candidates:
-        data, status, err = _koha_try(url, hdr)
-        if isinstance(data, list) and data:
-            out = []
-            for item in data[:max(1, int(limit))]:
-                title = item.get("title") or "No title"
-                author = item.get("author") or ""
-                bid = item.get("biblio_id") or item.get("biblionumber") or ""
-                detail = f"{KOHA_OPAC_BASE}/cgi-bin/koha/opac-detail.pl?biblionumber={bid}" if bid else opac_link
-                out.append({"title": title, "authors": author, "url": detail})
-            return {"records": out, "opac_url": opac_link}
-
-    return {"records": [], "opac_url": opac_link}
-
+# ==== Gemini prompt ====
 def create_payload(prompt):
     system_instruction = (
         "You are Ashu, an AI assistant for Bennett University Library. "
@@ -234,35 +205,13 @@ def create_payload(prompt):
         "Key information: "
         "- Library website: https://library.bennett.edu.in/. "
         "- Library timings: Weekdays 8:00 AM to 12:00 AM (midnight), Weekends & Holidays 9:00 AM to 5:00 PM (may vary during vacations, check https://library.bennett.edu.in/index.php/working-hours/). "
-        "- Physical book search: Use https://libraryopac.bennett.edu.in/ to search for physical books. For specific searches (e.g., by title or topic like 'Python'), guide users to enter terms in the catalog's title field. Automatic searches are not possible. "
-        "- e-Resources: Access digital books and journal articles at https://bennett.refread.com/#/home, available 24/7 remotely. "
+        "- Physical book search: Use https://libraryopac.bennett.edu.in/ to search for physical books. "
+        "- e-Resources: Access digital books and journal articles at https://bennett.refread.com/#/home. "
         "- Group Discussion Rooms: Book at http://10.6.0.121/gdroombooking/. "
-        "FAQ: "
-        "- Borrowing books: Use automated kiosks in the library (see library tutorial for details). "
-        "- Return books: Use the 24/7 Drop Box outside the library (see library tutorial). "
-        "- Overdue checks: Automated overdue emails are sent, or check via OPAC at https://libraryopac.bennett.edu.in/. "
-        "- Journal articles: Accessible 24/7 remotely at https://bennett.refread.com/#/home. "
-        "- Printing/Scanning: Available at the LRC from 9:00 AM to 5:30 PM. For laptop printing, email libraryhelpdesk@bennett.edu.in for official printouts or visit M-Block Library for other services. "
-        "- Alumni access: Alumni can access the LRC for reference. "
-        "- Book checkout limits: Refer to the library tutorial for details. "
-        "- Overdue fines: Pay via BU Payment Portal and update library staff. "
-        "- Book recommendations: Submit at https://docs.google.com/forms/d/e/1FAIpQLSeC0-LPlWvUbYBcN834Ct9kYdC9Oebutv5VWRcTujkzFgRjZw/viewform. "
-        "- Appeal fines: Contact libraryhelpdesk@bennett.edu.in or visit the HelpDesk. "
-        "- Download e-Books: Download chapters at https://bennett.refread.com/#/home. "
-        "- Inter Library Loan: Available via DELNET, contact library for details. "
-        "- Non-BU interns: Can use the library for reading only. "
-        "- Finding books on shelves: Search via OPAC; books have Call Numbers, and shelves are marked (see tutorial). "
-        "- Snacks in LRC: Not allowed, but water bottles are permitted. "
-        "- Drop Box issues: Confirm return via auto-generated email; if none, contact libraryhelpdesk@bennett.edu.in. "
-        "- Reserve a book: Use the 'Place Hold' feature in OPAC at https://libraryopac.bennett.edu.in/. "
         "If the question is unrelated, politely redirect to library-related topics. "
         f"User question: {prompt}"
     )
-    return {
-        "contents": [
-            {"parts": [{"text": system_instruction}]}
-        ]
-    }
+    return {"contents": [{"parts": [{"text": system_instruction}]}]}
 
 def call_gemini_api_v2(payload):
     if not GEMINI_API_KEY:
@@ -270,20 +219,14 @@ def call_gemini_api_v2(payload):
     url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
     try:
         response = requests.post(
-            url,
-            json=payload,
-            headers={
-                "Content-Type": "application/json",
-                "X-goog-api-key": GEMINI_API_KEY
-            },
+            url, json=payload,
+            headers={"Content-Type": "application/json", "X-goog-api-key": GEMINI_API_KEY},
             timeout=15
         )
         if response.status_code == 200:
             candidates = response.json().get("candidates", [{}])
-            answer = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "No answer found.")
-            return answer
-        else:
-            return f"Connection error: {response.status_code} - {response.text}"
+            return candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "No answer found.")
+        return f"Connection error: {response.status_code} - {response.text}"
     except Exception:
         return "A network error occurred. Please try again later."
 
@@ -297,33 +240,55 @@ def get_topic_from_prompt(prompt):
         return words[-2] if words[-1].lower() in ["articles", "पर", "on"] else words[-1]
     return prompt.strip()
 
-# ==== UPDATED: include Koha blocks ====
+# ==== Main chat intent handler ====
 def handle_user_query(prompt):
-    # Book search
-    if "find books on" in prompt.lower() or "find book on" in prompt.lower():
-        topic = (
-            prompt.lower()
-            .replace("find books on", "")
-            .replace("find book on", "")
-            .strip()
-        )
-        topic = topic if topic else "library"
+    pl = prompt.lower().strip()
+
+    # SPECIAL: All AI books from Koha (full list via Report)
+    if ("artificial intelligence" in pl) and ("find books" in pl or "books" in pl or "kitni" in pl or "list" in pl):
+        result = koha_ai_books()
+        if not result["ok"]:
+            return f"⚠️ {result['msg']}\n\nTry OPAC search: {KOHA_OPAC_BASE}/cgi-bin/koha/opac-search.pl?idx=ti&q=artificial%20intelligence"
+
+        rows = result["rows"]
+        n = len(rows)
+        answer = f"### 📚 Artificial Intelligence — Books in BU Koha\nFound **{n}** records.\n\n"
+        # Make a small markdown list preview (first 15)
+        for r in rows[:15]:
+            title = r.get("title") or "No title"
+            author = r.get("author") or ""
+            bid = r.get("biblio_id") or r.get("biblionumber") or ""
+            link = f"{KOHA_OPAC_BASE}/cgi-bin/koha/opac-detail.pl?biblionumber={bid}" if bid else f"{KOHA_OPAC_BASE}/cgi-bin/koha/opac-search.pl?idx=ti&q=artificial%20intelligence"
+            author_txt = f" — {author}" if author else ""
+            answer += f"- [{title}]({link}){author_txt}\n"
+
+        # Build CSV in-memory + provide download button
+        csv_buf = StringIO()
+        if rows:
+            fieldnames = ["biblio_id", "title", "subtitle", "author", "isbn", "publisher", "publication_year", "item_type"]
+            writer = csv.DictWriter(csv_buf, fieldnames=fieldnames, extrasaction="ignore")
+            writer.writeheader()
+            for r in rows:
+                writer.writerow(r)
+
+        st.markdown(answer)
+        if rows:
+            st.download_button(
+                label="⬇️ Download full AI books list (CSV)",
+                data=csv_buf.getvalue(),
+                file_name="artificial_intelligence_books.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+        return ""
+
+    # Generic “find books on …” (Google + links)
+    if "find books on" in pl or "find book on" in pl:
+        topic = pl.replace("find books on", "").replace("find book on", "").strip() or "library"
         answer = f"### 📚 Books on **{topic.title()}**\n"
-
-        # 1) Koha (real-time Bennett OPAC)
-        koha = koha_search_biblios(topic, limit=5)
-        answer += "#### Bennett OPAC (Koha)\n"
-        if koha["records"]:
-            for book in koha["records"]:
-                authors = f" by {book['authors']}" if book.get("authors") else ""
-                answer += f"- [{book['title']}]({book['url']}){authors}\n"
-        else:
-            answer += f"- *(API search not available on this server build)* — Try OPAC: [{topic}]({koha['opac_url']})\n"
-
-        # 2) Google Books
         gb = google_books_search(topic, limit=5)
-        answer += "\n#### Google Books\n"
         if gb:
+            answer += "#### Google Books\n"
             for book in gb:
                 authors = f" by {book['authors']}" if book['authors'] else ""
                 pub = f", {book['publisher']}" if book['publisher'] else ""
@@ -331,36 +296,24 @@ def handle_user_query(prompt):
                 answer += f"- [{book['title']}]({book['url']}){authors}{pub}{year}\n"
         else:
             answer += "- No relevant books found from Google Books.\n"
-
-        answer += f"\n**More:** [BU OPAC](https://libraryopac.bennett.edu.in/) · [Refread e-Resources](https://bennett.refread.com/#/home)\n"
+        answer += f"\n**More:** [BU OPAC]({KOHA_OPAC_BASE}) · [Refread e-Resources](https://bennett.refread.com/#/home)\n"
         return answer
 
-    # Article/research paper/journal
-    article_keywords = [
-        "article", "articles", "research paper", "journal", "preprint", "open access", "dataset", "साहित्य", "आर्टिकल", "पत्रिका", "जर्नल", "शोध", "पेपर"
-    ]
-    if any(kw in prompt.lower() for kw in article_keywords):
+    # Articles / research papers intent
+    article_keywords = ["article","articles","research paper","journal","preprint","open access","dataset","साहित्य","आर्टिकल","पत्रिका","जर्नल","शोध","पेपर"]
+    if any(kw in pl for kw in article_keywords):
         topic = get_topic_from_prompt(prompt)
         if not topic or len(topic) < 2:
-            return "Please specify a topic for article search. उदाहरण: 'articles on AI' या 'हिंदी साहित्य पर articles'।"
+            return "Please specify a topic for article search. उदाहरण: 'articles on AI' या 'हिंदी साहित्य पर articles'."
         topic = topic.strip()
-
         answer = f"### 🟦 Bennett University e-Resources (Refread)\n"
         answer += f"Find e-books and journal articles on **'{topic.title()}'** 24/7 here: [Refread](https://bennett.refread.com/#/home)\n\n"
 
-        # Koha (optional titles)
-        koha = koha_search_biblios(topic, limit=5)
-        answer += "#### Bennett OPAC (Koha)\n"
-        if koha["records"]:
-            for book in koha["records"]:
-                authors = f" by {book['authors']}" if book.get("authors") else ""
-                answer += f"- [{book['title']}]({book['url']}){authors}\n"
-        else:
-            answer += f"- *(API search not available on this server build)* — Try OPAC: [{topic}]({koha['opac_url']})\n"
+        # Optional: show a few Koha titles too (OPAC click-through)
+        answer += f"#### Bennett OPAC (titles)\n- Search: {KOHA_OPAC_BASE}/cgi-bin/koha/opac-search.pl?idx=ti&q={urllib.parse.quote(topic)}\n\n"
 
-        # GOOGLE BOOKS
         google_books = google_books_search(topic, limit=3)
-        answer += "\n#### Google Books\n"
+        answer += "#### Google Books\n"
         if google_books:
             for book in google_books:
                 authors = f" by {book['authors']}" if book['authors'] else ""
@@ -368,46 +321,42 @@ def handle_user_query(prompt):
                 year = f" ({book['year']})" if book['year'] else ""
                 answer += f"- [{book['title']}]({book['url']}){authors}{pub}{year}\n"
         else:
-            answer += "– No relevant books found from Google Books.\n"
+            answer += "- No relevant books found from Google Books.\n"
 
-        # CORE
         core_results = core_article_search(topic, limit=3)
-        answer += "#### 🌐 Open Access (CORE)\n"
+        answer += "\n#### 🌐 CORE (Open Access)\n"
         if core_results:
             for art in core_results:
-                title = art.get("title", "No Title")
+                title = art.get("title","No Title")
                 url = art.get("downloadUrl", art.get("urls", [{}])[0].get("url", "#"))
-                year = art.get("createdDate", "")[:4]
+                year = art.get("createdDate","")[:4]
                 answer += f"- [{title}]({url}) {'('+year+')' if year else ''}\n"
         else:
-            answer += "– No recent OA articles found on CORE.\n"
+            answer += "- No recent OA articles found on CORE.\n"
 
-        # arXiv
         arxiv_results = arxiv_article_search(topic, limit=3)
-        answer += "#### 📄 arXiv (Preprints)\n"
+        answer += "\n#### 📄 arXiv (Preprints)\n"
         if arxiv_results:
             for art in arxiv_results:
                 answer += f"- [{art['title']}]({art['url']}) ({art['year']})\n"
         else:
-            answer += "– No preprints found on arXiv.\n"
+            answer += "- No preprints found on arXiv.\n"
 
-        # DOAJ
         doaj_results = doaj_article_search(topic, limit=3)
-        answer += "#### 📚 DOAJ (Open Access Journals)\n"
+        answer += "\n#### 📚 DOAJ (Open Access Journals)\n"
         if doaj_results:
             for art in doaj_results:
                 answer += f"- [{art['title']}]({art['url']}) ({art['year']}) - {art['journal']}\n"
         else:
-            answer += "– No OA journal articles found on DOAJ.\n"
+            answer += "- No OA journal articles found on DOAJ.\n"
 
-        # DataCite
         datacite_results = datacite_article_search(topic, limit=3)
-        answer += "#### 🏷️ DataCite\n"
+        answer += "\n#### 🏷️ DataCite\n"
         if datacite_results:
             for art in datacite_results:
                 answer += f"- [{art['title']}]({art['url']}) ({art['year']}) - {art['journal']}\n"
         else:
-            answer += "– No entries found on DataCite.\n"
+            answer += "- No entries found on DataCite.\n"
 
         return answer
 
@@ -447,7 +396,8 @@ if prompt:
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.spinner("Ashu is typing..."):
         answer = handle_user_query(prompt)
-    st.session_state.messages.append({"role": "assistant", "content": answer})
+    if answer:
+        st.session_state.messages.append({"role": "assistant", "content": answer})
     st.rerun()
 st.markdown('</div>', unsafe_allow_html=True)
 
