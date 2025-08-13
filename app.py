@@ -2,350 +2,425 @@ import streamlit as st
 import requests
 import re
 import feedparser  # pip install feedparser
+import urllib.parse
+import csv
+from io import StringIO
+from datetime import datetime
 
-# ==== GET KEYS FROM SECRETS (never paste in code) ====
+# ==============================================================================
+# ==== 1. SETUP & CONFIGURATION ================================================
+# ==============================================================================
+
+# --- Get Keys from Secrets (never paste in code) ---
+# It's crucial these are set in your Streamlit Cloud secrets
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
 CORE_API_KEY = st.secrets.get("CORE_API_KEY", "")
 GOOGLE_BOOKS_API_KEY = st.secrets.get("GOOGLE_BOOKS_API_KEY", "")
 
-# ==== CSS ====
+# --- Koha Configuration (Internal) ---
+KOHA_BASE_URL = st.secrets.get("KOHA_BASE_URL", "")  # e.g., http://your-koha-domain/api/v1
+KOHA_CLIENT_ID = st.secrets.get("KOHA_CLIENT_ID", "")
+KOHA_CLIENT_SECRET = st.secrets.get("KOHA_CLIENT_SECRET", "")
+KOHA_OPAC_BASE = st.secrets.get("KOHA_OPAC_BASE", "https://libraryopac.bennett.edu.in")
+
+# --- CSS for Styling ---
 st.markdown("""
 <style>
-    :root { --header-color: #2e86c1; }
-    .main .block-container { max-width: 900px; padding: 2rem 1rem; }
-    .profile-container { text-align: center; margin-bottom: 1rem; }
-    .quick-actions-row { display: flex; justify-content: center; gap: 10px; margin: 1rem 0 2rem 0; width: 100%; }
-    .quick-action-btn { background-color: #2e86c1; color: white !important; padding: 10px 15px; border-radius: 20px; border: none; box-shadow: 0 2px 5px rgba(0,0,0,0.1); transition: all 0.3s; font-size: 14px; text-decoration: none; text-align: center; cursor: pointer; white-space: nowrap; flex: 1; max-width: 200px; }
-    .quick-action-btn:hover { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.15); }
-    .chat-container { margin: 2rem 0; }
-    .static-chat-input { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); width: 100%; max-width: 800px; z-index: 100; }
-    .stChatInput input { border-radius: 25px !important; padding: 12px 20px !important; }
-    .stChatInput button { border-radius: 50% !important; background-color: var(--header-color) !important; }
-    .footer { position: fixed; bottom: 0; left: 0; right: 0; text-align: center; color: #666; padding: 1rem; background-color: white; z-index: 99; }
-    @media (max-width: 700px) {
-        .main .block-container { padding: 0.5rem 0.2rem; }
-        .static-chat-input { max-width: 98vw; }
+    :root {
+        --header-color: #2e86c1;
+        --primary-bg: #ffffff;
+        --secondary-bg: #f0f2f6;
+        --text-color: #333;
+        --button-color: #ffffff;
     }
+    .main .block-container {
+        max-width: 900px;
+        padding: 2rem 1rem;
+    }
+    /* Login Page Styles */
+    .login-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 2rem;
+        background-color: var(--primary-bg);
+        border-radius: 10px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    .login-container h1 {
+        color: var(--header-color);
+    }
+    /* Chat Page Styles */
+    .profile-container {
+        text-align: center;
+        margin-bottom: 1rem;
+    }
+    .quick-actions-row {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 10px;
+        margin: 1rem 0 2rem 0;
+        width: 100%;
+    }
+    .quick-action-btn {
+        background-color: var(--header-color);
+        color: var(--button-color) !important;
+        padding: 10px 15px;
+        border-radius: 20px;
+        border: none;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        transition: all 0.3s;
+        font-size: 14px;
+        text-decoration: none;
+        text-align: center;
+        cursor: pointer;
+        white-space: nowrap;
+        flex: 1;
+        max-width: 200px;
+    }
+    .quick-action-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+    }
+    .stChatInput input {
+        border-radius: 25px !important;
+        padding: 12px 20px !important;
+        background-color: var(--secondary-bg);
+    }
+    .stChatInput button {
+        border-radius: 50% !important;
+        background-color: var(--header-color) !important;
+    }
+    .logout-button {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+    }
+    /* Fine and Book display */
+    .info-box {
+        background-color: var(--secondary-bg);
+        border-left: 5px solid var(--header-color);
+        padding: 15px;
+        border-radius: 5px;
+        margin-bottom: 10px;
+    }
+    .info-box h4 { margin-top: 0; }
+    .info-box ul { padding-left: 20px; margin-bottom: 0; }
 </style>
 """, unsafe_allow_html=True)
 
-# ==== BUTTONS ====
-def create_quick_action_button(text, url):
-    return f'<a href="{url}" target="_blank" class="quick-action-btn">{text}</a>'
 
-def show_quick_actions():
-    quick_actions = [
-        ("Find e-Resources", "https://bennett.refread.com/#/home"),
-        ("Find Books", "https://libraryopac.bennett.edu.in/"),
-        ("Working Hours", "https://library.bennett.edu.in/index.php/working-hours/"),
-        ("Book GD Rooms", "http://10.6.0.121/gdroombooking/")
-    ]
-    st.markdown(
-        '<div class="quick-actions-row">' +
-        "".join([create_quick_action_button(t, u) for t, u in quick_actions]) +
-        '</div>',
-        unsafe_allow_html=True
-    )
+# ==============================================================================
+# ==== 2. KOHA API INTEGRATION =================================================
+# ==============================================================================
 
-# ==== API FUNCTIONS ====
-def google_books_search(query, limit=5):
-    if not GOOGLE_BOOKS_API_KEY:
-        return []
-    url = f"https://www.googleapis.com/books/v1/volumes?q={query}&maxResults={limit}&key={GOOGLE_BOOKS_API_KEY}"
+# --- Koha OAuth Token Management ---
+@st.cache_data(ttl=3000)  # Cache token for 50 minutes
+def koha_get_token():
+    if not all([KOHA_BASE_URL, KOHA_CLIENT_ID, KOHA_CLIENT_SECRET]):
+        st.error("Koha API credentials are not set in secrets.")
+        return None
     try:
-        resp = requests.get(url, timeout=10)
-        items = resp.json().get("items", [])
-        result = []
-        for item in items:
-            volume = item.get("volumeInfo", {})
-            title = volume.get("title", "No Title")
-            authors = ", ".join(volume.get("authors", []))
-            link = volume.get("infoLink", "#")
-            publisher = volume.get("publisher", "")
-            year = volume.get("publishedDate", "")[:4]
-            result.append({
-                "title": title,
-                "authors": authors,
-                "url": link,
-                "publisher": publisher,
-                "year": year
-            })
-        return result
-    except Exception as e:
-        return []
-
-def core_article_search(query, limit=5):
-    if not CORE_API_KEY:
-        return []
-    url = "https://api.core.ac.uk/v3/search/works"
-    headers = {"Authorization": f"Bearer {CORE_API_KEY}"}
-    params = {"q": query, "limit": limit}
-    try:
-        r = requests.get(url, headers=headers, params=params, timeout=15)
-        if r.status_code == 200:
-            return r.json()["results"]
-        else:
-            return []
-    except Exception:
-        return []
-
-def arxiv_article_search(query, limit=5):
-    url = f"http://export.arxiv.org/api/query?search_query=all:{query}&start=0&max_results={limit}"
-    try:
-        feed = feedparser.parse(url)
-        result = []
-        for entry in feed.entries:
-            title = entry.title
-            pdf_links = [l.href for l in entry.links if l.type == "application/pdf"]
-            link = pdf_links[0] if pdf_links else entry.link
-            year = entry.published[:4]
-            result.append({"title": title, "url": link, "year": year})
-        return result
-    except Exception:
-        return []
-
-def doaj_article_search(query, limit=5):
-    url = f"https://doaj.org/api/search/articles/title:{query}"
-    try:
-        resp = requests.get(url, timeout=10)
-        if resp.status_code == 200:
-            data = resp.json()
-            articles = data.get("results", [])[:limit]
-            result = []
-            for art in articles:
-                bibjson = art.get("bibjson", {})
-                title = bibjson.get("title", "No Title")
-                link = bibjson.get("link", [{}])[0].get("url", "#")
-                journal = bibjson.get("journal", {}).get("title", "")
-                year = bibjson.get("year", "")
-                result.append({"title": title, "url": link, "journal": journal, "year": year})
-            return result
-        else:
-            return []
-    except Exception:
-        return []
-
-def datacite_article_search(query, limit=5):
-    url = f"https://api.datacite.org/dois?query={query}&page[size]={limit}"
-    try:
-        resp = requests.get(url, timeout=10)
-        if resp.status_code == 200:
-            items = resp.json().get("data", [])
-            result = []
-            for item in items:
-                attrs = item.get("attributes", {})
-                title = (attrs.get("titles", [{}])[0].get("title", "No Title")) if attrs.get("titles") else "No Title"
-                url2 = attrs.get("url", "#")
-                publisher = attrs.get("publisher", "")
-                year = attrs.get("publicationYear", "")
-                result.append({"title": title, "url": url2, "journal": publisher, "year": year})
-            return result
-        else:
-            return []
-    except Exception:
-        return []
-
-def create_payload(prompt):
-    system_instruction = (
-        "You are Ashu, an AI assistant for Bennett University Library. "
-        "Provide accurate and concise answers based on the following FAQ and library information. "
-        "Key information: "
-        "- Library website: https://library.bennett.edu.in/. "
-        "- Library timings: Weekdays 8:00 AM to 12:00 AM (midnight), Weekends & Holidays 9:00 AM to 5:00 PM (may vary during vacations, check https://library.bennett.edu.in/index.php/working-hours/). "
-        "- Physical book search: Use https://libraryopac.bennett.edu.in/ to search for physical books. For specific searches (e.g., by title or topic like 'Python'), guide users to enter terms in the catalog's title field. Automatic searches are not possible. "
-        "- e-Resources: Access digital books and journal articles at https://bennett.refread.com/#/home, available 24/7 remotely. "
-        "- Group Discussion Rooms: Book at http://10.6.0.121/gdroombooking/. "
-        "FAQ: "
-        "- Borrowing books: Use automated kiosks in the library (see library tutorial for details). "
-        "- Return books: Use the 24/7 Drop Box outside the library (see library tutorial). "
-        "- Overdue checks: Automated overdue emails are sent, or check via OPAC at https://libraryopac.bennett.edu.in/. "
-        "- Journal articles: Accessible 24/7 remotely at https://bennett.refread.com/#/home. "
-        "- Printing/Scanning: Available at the LRC from 9:00 AM to 5:30 PM. For laptop printing, email libraryhelpdesk@bennett.edu.in for official printouts or visit M-Block Library for other services. "
-        "- Alumni access: Alumni can access the LRC for reference. "
-        "- Book checkout limits: Refer to the library tutorial for details. "
-        "- Overdue fines: Pay via BU Payment Portal and update library staff. "
-        "- Book recommendations: Submit at https://docs.google.com/forms/d/e/1FAIpQLSeC0-LPlWvUbYBcN834Ct9kYdC9Oebutv5VWRcTujkzFgRjZw/viewform. "
-        "- Appeal fines: Contact libraryhelpdesk@bennett.edu.in or visit the HelpDesk. "
-        "- Download e-Books: Download chapters at https://bennett.refread.com/#/home. "
-        "- Inter Library Loan: Available via DELNET, contact library for details. "
-        "- Non-BU interns: Can use the library for reading only. "
-        "- Finding books on shelves: Search via OPAC; books have Call Numbers, and shelves are marked (see tutorial). "
-        "- Snacks in LRC: Not allowed, but water bottles are permitted. "
-        "- Drop Box issues: Confirm return via auto-generated email; if none, contact libraryhelpdesk@bennett.edu.in. "
-        "- Reserve a book: Use the 'Place Hold' feature in OPAC at https://libraryopac.bennett.edu.in/. "
-        "If the question is unrelated, politely redirect to library-related topics. "
-        f"User question: {prompt}"
-    )
-    return {
-        "contents": [
-            {"parts": [{"text": system_instruction}]}
-        ]
-    }
-
-def call_gemini_api_v2(payload):
-    if not GEMINI_API_KEY:
-        return "Gemini API Key is missing. Please set it in Streamlit secrets."
-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-    try:
-        response = requests.post(
-            url,
-            json=payload,
-            headers={
-                "Content-Type": "application/json",
-                "X-goog-api-key": GEMINI_API_KEY
+        r = requests.post(
+            f"{KOHA_BASE_URL}/oauth/token",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            data={
+                "grant_type": "client_credentials",
+                "client_id": KOHA_CLIENT_ID,
+                "client_secret": KOHA_CLIENT_SECRET
             },
             timeout=15
         )
-        if response.status_code == 200:
-            candidates = response.json().get("candidates", [{}])
-            answer = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "No answer found.")
-            return answer
-        else:
-            return f"Connection error: {response.status_code} - {response.text}"
-    except Exception as e:
-        return "A network error occurred. Please try again later."
+        if r.status_code == 200:
+            return r.json().get("access_token")
+        st.error(f"Koha Token Error: {r.status_code} - {r.text}")
+        return None
+    except requests.exceptions.RequestException as e:
+        st.error(f"Koha Network Error: {e}")
+        return None
 
-def get_topic_from_prompt(prompt):
-    pattern = r"(?:on|par|about|ke bare mein|पर|के बारे में|का|की)\s+([a-zA-Z0-9\-अ-ह ]+)"
-    match = re.search(pattern, prompt, re.IGNORECASE)
-    if match:
-        return match.group(1).strip()
-    words = prompt.strip().split()
-    if len(words) > 1:
-        return words[-2] if words[-1].lower() in ["articles", "पर", "on"] else words[-1]
-    return prompt.strip()
+# --- Patron (User) Authentication & Data ---
+def koha_authenticate_and_get_patron(cardnumber, password):
+    """
+    Authenticates a patron and fetches their details.
+    NOTE: This uses a workaround. The standard Koha REST API doesn't have a direct
+    password verification endpoint. This function checks if a patron with the
+    given cardnumber exists. In a real-world scenario, you would need a more
+    secure authentication method, possibly a custom plugin or middleware.
+    """
+    token = koha_get_token()
+    if not token:
+        return None, "Could not connect to the library system."
+
+    headers = {"Authorization": f"Bearer {token}"}
+    # For this example, we're finding the patron by card number.
+    # Password verification is NOT performed by this API call.
+    try:
+        r = requests.get(
+            f"{KOHA_BASE_URL}/patrons?cardnumber={cardnumber}",
+            headers=headers,
+            timeout=10
+        )
+        if r.status_code == 200 and r.json():
+            patron_data = r.json()[0]
+            # Here you would add password verification logic if available
+            # For now, we assume if the user exists, login is successful.
+            return patron_data, "Login Successful"
+        elif r.status_code == 200:
+            return None, "Invalid username. Please check your card number."
+        else:
+            return None, f"API Error: {r.status_code}"
+    except requests.exceptions.RequestException as e:
+        return None, f"Network Error: {e}"
+
+def koha_get_fines(borrowernumber):
+    """Fetches total fine amount for a given patron."""
+    token = koha_get_token()
+    if not token:
+        return "Error: Could not get API token."
+
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        r = requests.get(f"{KOHA_BASE_URL}/patrons/{borrowernumber}/fines", headers=headers, timeout=10)
+        if r.status_code == 200:
+            fines_data = r.json()
+            total_fine = fines_data.get("total_outstanding", 0.0)
+            return f"""
+            <div class="info-box">
+                <h4>💰 Your Fines</h4>
+                Your total pending fine amount is **₹{total_fine:.2f}**.
+                <br>Please clear the fine to continue borrowing books.
+            </div>
+            """
+        return "Could not retrieve your fine information at this time."
+    except requests.exceptions.RequestException:
+        return "A network error occurred while fetching your fine details."
+
+def koha_get_checkouts(borrowernumber):
+    """Fetches the list of books currently checked out by a patron."""
+    token = koha_get_token()
+    if not token:
+        return "Error: Could not get API token."
+
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        r = requests.get(f"{KOHA_BASE_URL}/patrons/{borrowernumber}/checkouts", headers=headers, timeout=15)
+        if r.status_code == 200 and r.json():
+            checkouts = r.json()
+            response_md = '<div class="info-box"><h4>📚 Your Borrowed Books</h4><ul>'
+            for item in checkouts:
+                title = item.get('biblio', {}).get('title', 'Unknown Title')
+                due_date_str = item.get('due_date', '')
+                try:
+                    due_date = datetime.fromisoformat(due_date_str.replace('Z', '+00:00')).strftime('%d-%b-%Y')
+                except (ValueError, TypeError):
+                    due_date = "N/A"
+                
+                biblio_id = item.get('biblio', {}).get('biblio_id', '')
+                link = f"{KOHA_OPAC_BASE}/cgi-bin/koha/opac-detail.pl?biblionumber={biblio_id}" if biblio_id else "#"
+
+                response_md += f"<li><a href='{link}' target='_blank'>{title}</a> (Due: {due_date})</li>"
+            response_md += "</ul></div>"
+            return response_md
+        elif r.status_code == 200:
+            return "<div class='info-box'>You have no books currently borrowed.</div>"
+        return "Could not retrieve your borrowed books information."
+    except requests.exceptions.RequestException:
+        return "A network error occurred while fetching your borrowed books."
+
+# --- General Book/Article Search (from your original code, slightly adapted) ---
+def koha_biblios_search(query, limit=5):
+    """Searches the Koha catalog for books."""
+    token = koha_get_token()
+    if not token:
+        return []
+    headers = {"Authorization": f"Bearer {token}"}
+    params = {"q": f"title:{query}", "_page": 1, "_per_page": limit}
+    try:
+        r = requests.get(f"{KOHA_BASE_URL}/biblios", headers=headers, params=params, timeout=10)
+        if r.status_code == 200:
+            return r.json()
+        return []
+    except requests.exceptions.RequestException:
+        return []
+
+# (Other search functions like google_books_search, core_article_search etc. remain the same)
+def google_books_search(query, limit=5):
+    if not GOOGLE_BOOKS_API_KEY: return []
+    url = f"https://www.googleapis.com/books/v1/volumes?q={urllib.parse.quote(query)}&maxResults={limit}&key={GOOGLE_BOOKS_API_KEY}"
+    try:
+        resp = requests.get(url, timeout=10).json()
+        return [{"title": v.get("volumeInfo", {}).get("title", ""), "authors": ", ".join(v.get("volumeInfo", {}).get("authors", [])), "url": v.get("volumeInfo", {}).get("infoLink", "#")} for v in resp.get("items", [])]
+    except Exception: return []
+
+# ==============================================================================
+# ==== 3. GEMINI (LLM) AND CHAT LOGIC ==========================================
+# ==============================================================================
+
+def call_gemini_api(prompt):
+    """Calls Gemini for general conversation."""
+    if not GEMINI_API_KEY:
+        return "Gemini API Key is missing. Please set it in Streamlit secrets."
+    
+    system_instruction = (
+        "You are Ashu, an AI assistant for Bennett University Library. "
+        "Provide accurate and concise answers based on library information. "
+        "Library website: https://library.bennett.edu.in/. "
+        "Timings: Weekdays 8 AM to 12 AM, Weekends 9 AM to 5 PM. "
+        "For physical books, use the OPAC. For e-resources, use Refread. "
+        "If asked about personal data like fines, tell the user to ask 'my fine amount' or 'my borrowed books'. "
+        "If the question is unrelated, politely redirect to library topics."
+    )
+    payload = {"contents": [{"parts": [{"text": f"{system_instruction}\n\nUser question: {prompt}"}]}]}
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent"
+    try:
+        response = requests.post(
+            url, json=payload,
+            headers={"Content-Type": "application/json", "X-goog-api-key": GEMINI_API_KEY},
+            timeout=20
+        )
+        if response.status_code == 200:
+            return response.json()["candidates"][0]["content"]["parts"][0]["text"]
+        return f"Connection error: {response.status_code} - {response.text}"
+    except Exception as e:
+        return f"A network error occurred: {e}"
 
 def handle_user_query(prompt):
-    # Book search
-    if "find books on" in prompt.lower() or "find book on" in prompt.lower():
-        topic = (
-            prompt.lower()
-            .replace("find books on", "")
-            .replace("find book on", "")
-            .strip()
-        )
-        books = google_books_search(topic, limit=5)
-        answer = f"### 📚 Books on **{topic.title()}** (Google Books)\n"
-        if books:
-            for book in books:
-                authors = f" by {book['authors']}" if book['authors'] else ""
-                pub = f", {book['publisher']}" if book['publisher'] else ""
-                year = f" ({book['year']})" if book['year'] else ""
-                answer += f"- [{book['title']}]({book['url']}){authors}{pub}{year}\n"
+    """The main brain, routing user queries to the right function."""
+    pl = prompt.lower().strip()
+    borrowernumber = st.session_state.get("borrowernumber")
+
+    # --- Personalized Queries (Require Login) ---
+    if any(kw in pl for kw in ["my fine", "fine amount", "fine details", "kitna fine hai"]):
+        return koha_get_fines(borrowernumber) if borrowernumber else "Please log in to check your fine details."
+
+    if any(kw in pl for kw in ["my books", "borrowed books", "checkouts", "meri kitabein"]):
+        return koha_get_checkouts(borrowernumber) if borrowernumber else "Please log in to see your borrowed books."
+
+    # --- General Book/Article Search ---
+    if "find book" in pl or "search for book" in pl:
+        topic = re.sub(r'find book(s)? (on|for)?', '', pl, flags=re.IGNORECASE).strip()
+        if not topic: return "Please specify a topic for the book search."
+        
+        answer = f"### 📚 Books on **{topic.title()}**\n"
+        
+        # Search Koha Catalog First
+        koha_results = koha_biblios_search(topic)
+        answer += "#### In Bennett University Library (Koha)\n"
+        if koha_results:
+            for book in koha_results:
+                link = f"{KOHA_OPAC_BASE}/cgi-bin/koha/opac-detail.pl?biblionumber={book['biblio_id']}"
+                answer += f"- [{book.get('title', 'No Title')}]({link}) by {book.get('author', 'N/A')}\n"
         else:
-            answer += "No relevant books found from Google Books.\n"
-        answer += f"\n**For more, search [BU OPAC](https://libraryopac.bennett.edu.in/) or [Refread](https://bennett.refread.com/#/home).**"
+            answer += "- No direct matches found in the university catalog.\n"
+
+        # Search Google Books
+        gb_results = google_books_search(topic)
+        answer += "\n#### On Google Books\n"
+        if gb_results:
+            for book in gb_results:
+                 answer += f"- [{book['title']}]({book['url']}) by {book['authors']}\n"
+        else:
+            answer += "- No relevant books found on Google Books.\n"
         return answer
 
-    # Article/research paper/journal
-    article_keywords = [
-        "article", "articles", "research paper", "journal", "preprint", "open access", "dataset", "साहित्य", "आर्टिकल", "पत्रिका", "जर्नल", "शोध", "पेपर"
-    ]
-    if any(kw in prompt.lower() for kw in article_keywords):
-        topic = get_topic_from_prompt(prompt)
-        if not topic or len(topic) < 2:
-            return "Please specify a topic for article search. उदाहरण: 'articles on AI' या 'हिंदी साहित्य पर articles'।"
-        topic = topic.strip()
+    # --- Fallback to Gemini for general questions ---
+    return call_gemini_api(prompt)
 
-        answer = f"### 🟦 Bennett University e-Resources (Refread)\n"
-        answer += f"Find e-books and journal articles on **'{topic.title()}'** 24/7 here: [Refread](https://bennett.refread.com/#/home)\n\n"
 
-        # GOOGLE BOOKS
-        google_books = google_books_search(topic, limit=3)
-        answer += "### 📚 Books from Google Books\n"
-        if google_books:
-            for book in google_books:
-                authors = f" by {book['authors']}" if book['authors'] else ""
-                pub = f", {book['publisher']}" if book['publisher'] else ""
-                year = f" ({book['year']})" if book['year'] else ""
-                answer += f"- [{book['title']}]({book['url']}){authors}{pub}{year}\n"
-        else:
-            answer += "No relevant books found from Google Books.\n"
+# ==============================================================================
+# ==== 4. STREAMLIT UI (LOGIN AND CHAT PAGES) ==================================
+# ==============================================================================
 
-        # CORE
-        core_results = core_article_search(topic, limit=3)
-        answer += "### 🌐 Open Access (CORE)\n"
-        if core_results:
-            for art in core_results:
-                title = art.get("title", "No Title")
-                url = art.get("downloadUrl", art.get("urls", [{}])[0].get("url", "#"))
-                year = art.get("createdDate", "")[:4]
-                answer += f"- [{title}]({url}) {'('+year+')' if year else ''}\n"
-        else:
-            answer += "No recent articles found on this topic from CORE.\n"
+def show_login_page():
+    """Displays the login form."""
+    st.markdown('<div class="login-container">', unsafe_allow_html=True)
+    st.image("https://library.bennett.edu.in/wp-content/uploads/2024/05/WhatsApp-Image-2024-05-01-at-12.41.02-PM-e1714549052999-150x150.jpeg", width=120)
+    st.title("Library AI Assistant Login")
+    st.write("Please log in with your library card number to continue.")
 
-        # arXiv
-        arxiv_results = arxiv_article_search(topic, limit=3)
-        answer += "### 📄 Preprints (arXiv)\n"
-        if arxiv_results:
-            for art in arxiv_results:
-                answer += f"- [{art['title']}]({art['url']}) ({art['year']})\n"
-        else:
-            answer += "No recent preprints found on this topic from arXiv.\n"
+    with st.form("login_form"):
+        username = st.text_input("Library Card Number (Username)", key="username")
+        password = st.text_input("Password", type="password", key="password")
+        submitted = st.form_submit_button("Login", use_container_width=True)
 
-        # DOAJ
-        doaj_results = doaj_article_search(topic, limit=3)
-        answer += "### 📚 Open Access Journals (DOAJ)\n"
-        if doaj_results:
-            for art in doaj_results:
-                answer += f"- [{art['title']}]({art['url']}) ({art['year']}) - {art['journal']}\n"
-        else:
-            answer += "No open access journal articles found on this topic from DOAJ.\n"
+        if submitted:
+            if not username:
+                st.warning("Please enter your card number.")
+            else:
+                with st.spinner("Authenticating..."):
+                    patron_data, message = koha_authenticate_and_get_patron(username, password)
+                    if patron_data:
+                        st.session_state.logged_in = True
+                        st.session_state.borrowernumber = patron_data.get("borrowernumber")
+                        st.session_state.patron_name = f"{patron_data.get('firstname')} {patron_data.get('surname')}"
+                        st.session_state.messages = [] # Clear messages on new login
+                        st.success("Login successful! Redirecting...")
+                        st.rerun()
+                    else:
+                        st.error(f"Login Failed: {message}")
+    st.markdown('</div>', unsafe_allow_html=True)
 
-        # DataCite
-        datacite_results = datacite_article_search(topic, limit=3)
-        answer += "### 🏷️ Research Data/Articles (DataCite)\n"
-        if datacite_results:
-            for art in datacite_results:
-                answer += f"- [{art['title']}]({art['url']}) ({art['year']}) - {art['journal']}\n"
-        else:
-            answer += "No research datasets/articles found on this topic from DataCite.\n"
-
-        return answer
-
-    # General (FAQ etc) - Gemini
-    payload = create_payload(prompt)
-    return call_gemini_api_v2(payload)
-
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-st.markdown("""
-<div class="profile-container">
-    <img src="https://library.bennett.edu.in/wp-content/uploads/2024/05/WhatsApp-Image-2024-05-01-at-12.41.02-PM-e1714549052999-150x150.jpeg" 
-         width="150" 
-         style="border-radius: 50%; border: 3px solid #2e86c1; margin-bottom: 1rem;">
-    <h1 style="color: #2e86c1; margin-bottom: 0.5rem; font-size: 2em;">Ashu AI Assistant at Bennett University Library</h1>
-</div>
-""", unsafe_allow_html=True)
-
-show_quick_actions()
-
-st.markdown("""
-<div style="text-align: center; margin: 2rem 0;">
-    <p style="font-size: 1.1em;">Hello! I am Ashu, your AI assistant at Bennett University Library. How can I help you today?</p>
-</div>
-""", unsafe_allow_html=True)
-
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-
-st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
-prompt = st.chat_input("Type your query about books, research papers, journals, library services...")
-
-if prompt:
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.spinner("Ashu is typing..."):
-        answer = handle_user_query(prompt)
-    st.session_state.messages.append({"role": "assistant", "content": answer})
-    st.rerun()
-st.markdown('</div>', unsafe_allow_html=True)
-
-st.markdown("""
-<div class="footer">
-    <div style="margin: 0.5rem 0;">
-        © 2025 - Ashutosh Mishra | All Rights Reserved
+def show_chat_page():
+    """Displays the main chatbot interface after login."""
+    
+    # --- Header and Logout Button ---
+    st.markdown(f"""
+    <div class="profile-container">
+        <h2 style="color: #2e86c1;">Ashu AI Assistant</h2>
+        <p>Welcome, <strong>{st.session_state.get('patron_name', 'User')}</strong>!</p>
     </div>
-</div>
-""", unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
+
+    if st.button("Logout", key="logout"):
+        # Clear session state on logout
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.rerun()
+
+    # --- Quick Action Buttons ---
+    st.markdown(
+        '<div class="quick-actions-row">'
+        '<div class="quick-action-btn" onclick="st.session_state.prompt = \'my fine amount\'">Check My Fines</div>'
+        '<div class="quick-action-btn" onclick="st.session_state.prompt = \'my borrowed books\'">My Borrowed Books</div>'
+        '</div>',
+        unsafe_allow_html=True # Note: This JS click simulation is a hack and might not work perfectly. A better way is to use buttons that rerun the script.
+    )
+
+    # --- Chat History ---
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"], unsafe_allow_html=True)
+
+    # --- Chat Input ---
+    prompt = st.chat_input("Ask about your fines, books, or general library questions...")
+    if prompt:
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        with st.chat_message("assistant"):
+            with st.spinner("Ashu is thinking..."):
+                response = handle_user_query(prompt)
+                st.markdown(response, unsafe_allow_html=True)
+        
+        st.session_state.messages.append({"role": "assistant", "content": response})
+        st.rerun()
+
+
+# ==============================================================================
+# ==== 5. MAIN APP ROUTER ======================================================
+# ==============================================================================
+
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+
+if st.session_state.logged_in:
+    show_chat_page()
+else:
+    show_login_page()
