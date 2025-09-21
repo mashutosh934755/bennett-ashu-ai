@@ -1,138 +1,121 @@
-# app.py  — Ashu (text-only, polished UI)
+"""
+voice_agent_app.py (text-only)
+==============================
+
+This Streamlit application builds on the existing Ashu AI assistant
+originally written for the Bennett University Library. The app now
+focuses **only on text-based** queries (all voice features removed).
+
+Users can type questions and receive answers. It integrates with
+Google Books, CORE, arXiv, DOAJ, and DataCite for discovery, and can
+fallback to Gemini for general library FAQs when custom logic isn't
+matched.
+
+Dependencies to install before running this application:
+
+```
+pip install streamlit requests feedparser
+```
+
+(Voice-specific packages like `audio-recorder-streamlit`,
+`streamlit-TTS`, and `SpeechRecognition` are **not** required.)
+
+Make sure to set your API keys in Streamlit secrets:
+- `GEMINI_API_KEY`
+- `CORE_API_KEY`
+- `GOOGLE_BOOKS_API_KEY`
+
+The app remains keyboard-first and mobile-friendly.
+"""
 
 import re
 import requests
 import feedparser
+
 import streamlit as st
 
-# ==== KEYS ====
+# ==== GET KEYS FROM SECRETS (never paste in code) ====
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
 CORE_API_KEY = st.secrets.get("CORE_API_KEY", "")
 GOOGLE_BOOKS_API_KEY = st.secrets.get("GOOGLE_BOOKS_API_KEY", "")
 
-# ==== THEME / CSS ====
-st.set_page_config(page_title="Ashu — AI assistant", page_icon="🤖", layout="centered")
-
-st.markdown("""
-<style>
-:root{
-  --brand-a:#960820; /* primary */
-  --brand-b:#0D335E; /* secondary */
-}
-
-/* Kill Streamlit footer / toolbar / viewer badge everywhere */
-footer, [data-testid="stStatusWidget"], [data-testid="stToolbar"],
-.viewerBadge_container__*, .viewerBadge_link__*, .viewerBadge___,
-a[href*="streamlit.io"], div:has(> a[href*="streamlit.io"]) {
-  display:none !important; visibility:hidden !important; height:0 !important;
-}
-
-/* App shell */
-.main .block-container { max-width: 950px; padding: 1.2rem 1rem 7rem; } /* bottom padding for our custom footer */
-.profile-container { text-align:center; margin: 0.5rem 0 1rem; }
-.profile-container img{ border-radius:50%; border:3px solid var(--brand-b); }
-
-/* Title */
-h1.app-title{
-  margin: .25rem 0 1.25rem;
-  color: var(--brand-b);
-  font-weight: 800; font-size: clamp(20px, 2.6vw, 30px);
-  text-align: center;
-}
-
-/* Quick actions – two-by-two grid that never overflows */
-.quick-actions{
-  margin: 10px auto 18px; width: 100%; display: grid; gap: 14px;
-  grid-template-columns: repeat(2, minmax(200px,1fr));
-}
-@media (max-width: 560px){
-  .quick-actions{ grid-template-columns: 1fr; }
-}
-.quick-actions a{
-  display:inline-flex; align-items:center; justify-content:center;
-  background: var(--brand-b); color:#fff !important; text-decoration:none;
-  padding: 14px 16px; border-radius: 22px; font-weight: 700;
-  box-shadow: 0 8px 18px rgba(13,51,94,.18);
-  transition: transform .15s ease, box-shadow .15s ease;
-}
-.quick-actions a:hover{ transform: translateY(-2px); box-shadow: 0 10px 22px rgba(13,51,94,.24); }
-
-/* Chat input pinned look */
-.stChatInput > div > div{ border-radius: 24px !important; }
-.stChatInput button{
-  border-radius: 50% !important;
-  background: var(--brand-b) !important;
-}
-
-/* Cards / message body spacing */
-.chat-intro{ text-align:center; color: var(--brand-b); margin: 12px 0 8px; font-weight:600; }
-
-/* Make sure the first input is not pushed off-screen in small iframes */
-@media (max-height: 700px){
-  .main .block-container{ padding-top: .5rem; }
-}
-
-/* Custom sticky footer */
-.custom-footer{
-  position: fixed; left:0; right:0; bottom:0;
-  background:#fff; border-top:1px solid #eef1f5;
-  text-align:center; padding:.7rem .5rem; z-index: 9999;
-  color: var(--brand-b); font-weight:700;
-}
-</style>
-""", unsafe_allow_html=True)
-
-# ==== UI HEADER ====
+# ==== CSS ====
 st.markdown(
     """
-    <div class="profile-container">
-      <img src="https://library.bennett.edu.in/wp-content/uploads/2024/05/WhatsApp-Image-2024-05-01-at-12.41.02-PM-e1714549052999-150x150.jpeg"
-           width="120" alt="Ashu">
-      <h1 class="app-title">Ashu — AI assistant, Bennett University Library</h1>
-    </div>
-    """,
+<style>
+    :root { --header-color: #2e86c1; }
+    .main .block-container { max-width: 900px; padding: 2rem 1rem; }
+    .profile-container { text-align: center; margin-bottom: 1rem; }
+    .quick-actions-row { display: flex; justify-content: center; gap: 10px; margin: 1rem 0 2rem 0; width: 100%; }
+    .quick-action-btn { background-color: #2e86c1; color: white !important; padding: 10px 15px; border-radius: 20px; border: none; box-shadow: 0 2px 5px rgba(0,0,0,0.1); transition: all 0.3s; font-size: 14px; text-decoration: none; text-align: center; cursor: pointer; white-space: nowrap; flex: 1; max-width: 200px; }
+    .quick-action-btn:hover { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.15); }
+    .chat-container { margin: 2rem 0; }
+    .static-chat-input { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); width: 100%; max-width: 800px; z-index: 100; }
+    .stChatInput input { border-radius: 25px !important; padding: 12px 20px !important; }
+    .stChatInput button { border-radius: 50% !important; background-color: var(--header-color) !important; }
+    .footer { position: fixed; bottom: 0; left: 0; right: 0; text-align: center; color: #666; padding: 1rem; background-color: white; z-index: 99; }
+    @media (max-width: 700px) {
+        .main .block-container { padding: 0.5rem 0.2rem; }
+        .static-chat-input { max-width: 98vw; }
+    }
+</style>
+""",
     unsafe_allow_html=True,
 )
 
-# ==== QUICK ACTIONS ====
-def qa_button(text: str, url: str) -> str:
-    return f'<a href="{url}" target="_blank" rel="noopener">{text}</a>'
+# ==== BUTTONS ====
+def create_quick_action_button(text: str, url: str) -> str:
+    """Return an HTML anchor styled as a quick action button."""
+    return f'<a href="{url}" target="_blank" class="quick-action-btn">{text}</a>'
 
-st.markdown(
-    '<div class="quick-actions">' +
-    qa_button("Find e-Resources", "https://bennett.refread.com/#/home") +
-    qa_button("Find Books", "https://libraryopac.bennett.edu.in/") +
-    qa_button("Working Hours", "https://library.bennett.edu.in/index.php/working-hours/") +
-    qa_button("Book GD Rooms", "http://10.6.0.121/gdroombooking/") +
-    '</div>',
-    unsafe_allow_html=True
-)
 
-st.markdown('<div class="chat-intro">Hello! I am Ashu. How can I help you today?</div>', unsafe_allow_html=True)
+def show_quick_actions() -> None:
+    """Render quick links to common library resources."""
+    quick_actions = [
+        ("Find e-Resources", "https://bennett.refread.com/#/home"),
+        ("Find Books", "https://libraryopac.bennett.edu.in/"),
+        ("Working Hours", "https://library.bennett.edu.in/index.php/working-hours/"),
+        ("Book GD Rooms", "http://10.6.0.121/gdroombooking/"),
+    ]
+    st.markdown(
+        '<div class="quick-actions-row">'
+        + "".join([create_quick_action_button(t, u) for t, u in quick_actions])
+        + '</div>',
+        unsafe_allow_html=True,
+    )
 
-# ==== DATA HELPERS ====
+
+# ==== API FUNCTIONS ====
 def google_books_search(query: str, limit: int = 5):
+    """Search Google Books API and return a list of book metadata dictionaries."""
     if not GOOGLE_BOOKS_API_KEY:
         return []
     url = f"https://www.googleapis.com/books/v1/volumes?q={query}&maxResults={limit}&key={GOOGLE_BOOKS_API_KEY}"
     try:
-        r = requests.get(url, timeout=12)
-        items = r.json().get("items", [])
-        out = []
-        for it in items:
-            v = it.get("volumeInfo", {})
-            out.append({
-                "title": v.get("title", "No Title"),
-                "authors": ", ".join(v.get("authors", [])),
-                "url": v.get("infoLink", "#"),
-                "publisher": v.get("publisher", ""),
-                "year": (v.get("publishedDate","")[:4] if v.get("publishedDate") else "")
+        resp = requests.get(url, timeout=10)
+        items = resp.json().get("items", [])
+        result = []
+        for item in items:
+            volume = item.get("volumeInfo", {})
+            title = volume.get("title", "No Title")
+            authors = ", ".join(volume.get("authors", []))
+            link = volume.get("infoLink", "#")
+            publisher = volume.get("publisher", "")
+            year = volume.get("publishedDate", "")[:4]
+            result.append({
+                "title": title,
+                "authors": authors,
+                "url": link,
+                "publisher": publisher,
+                "year": year,
             })
-        return out
+        return result
     except Exception:
         return []
 
+
 def core_article_search(query: str, limit: int = 5):
+    """Search the CORE API for open access articles."""
     if not CORE_API_KEY:
         return []
     url = "https://api.core.ac.uk/v3/search/works"
@@ -142,162 +125,314 @@ def core_article_search(query: str, limit: int = 5):
         r = requests.get(url, headers=headers, params=params, timeout=15)
         if r.status_code == 200:
             return r.json().get("results", [])
-        return []
+        else:
+            return []
     except Exception:
         return []
 
+
 def arxiv_article_search(query: str, limit: int = 5):
+    """Search arXiv for preprints matching the query."""
     url = f"http://export.arxiv.org/api/query?search_query=all:{query}&start=0&max_results={limit}"
     try:
         feed = feedparser.parse(url)
-        data = []
-        for e in feed.entries:
-            pdfs = [l.href for l in e.links if l.type == "application/pdf"]
-            data.append({"title": e.title, "url": (pdfs[0] if pdfs else e.link), "year": e.published[:4]})
-        return data
+        result = []
+        for entry in feed.entries:
+            title = entry.title
+            pdf_links = [l.href for l in entry.links if l.type == "application/pdf"]
+            link = pdf_links[0] if pdf_links else entry.link
+            year = entry.published[:4]
+            result.append({"title": title, "url": link, "year": year})
+        return result
     except Exception:
         return []
+
 
 def doaj_article_search(query: str, limit: int = 5):
+    """Search DOAJ for open access journal articles."""
     url = f"https://doaj.org/api/search/articles/title:{query}"
     try:
-        r = requests.get(url, timeout=12)
-        if r.status_code == 200:
-            items = r.json().get("results", [])[:limit]
-            out = []
-            for a in items:
-                b = a.get("bibjson", {})
-                out.append({
-                    "title": b.get("title", "No Title"),
-                    "url": (b.get("link", [{}])[0].get("url", "#")),
-                    "journal": b.get("journal", {}).get("title", ""),
-                    "year": b.get("year","")
-                })
-            return out
-        return []
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            articles = data.get("results", [])[:limit]
+            result = []
+            for art in articles:
+                bibjson = art.get("bibjson", {})
+                title = bibjson.get("title", "No Title")
+                link = bibjson.get("link", [{}])[0].get("url", "#")
+                journal = bibjson.get("journal", {}).get("title", "")
+                year = bibjson.get("year", "")
+                result.append({"title": title, "url": link, "journal": journal, "year": year})
+            return result
+        else:
+            return []
     except Exception:
         return []
+
 
 def datacite_article_search(query: str, limit: int = 5):
+    """Search DataCite for research datasets or articles."""
     url = f"https://api.datacite.org/dois?query={query}&page[size]={limit}"
     try:
-        r = requests.get(url, timeout=12)
-        if r.status_code == 200:
-            out = []
-            for d in r.json().get("data", []):
-                a = d.get("attributes", {})
-                title = (a.get("titles",[{}])[0].get("title","No Title"))
-                out.append({
-                    "title": title,
-                    "url": a.get("url", "#"),
-                    "journal": a.get("publisher", ""),
-                    "year": a.get("publicationYear", "")
-                })
-            return out
-        return []
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 200:
+            items = resp.json().get("data", [])
+            result = []
+            for item in items:
+                attrs = item.get("attributes", {})
+                titles = attrs.get("titles", [{}])
+                title = titles[0].get("title", "No Title") if titles else "No Title"
+                url2 = attrs.get("url", "#")
+                publisher = attrs.get("publisher", "")
+                year = attrs.get("publicationYear", "")
+                result.append({"title": title, "url": url2, "journal": publisher, "year": year})
+            return result
+        else:
+            return []
     except Exception:
         return []
 
+
 def create_payload(prompt: str):
+    """Build the payload for Gemini to answer general library FAQs."""
     system_instruction = (
         "You are Ashu, an AI assistant for Bennett University Library. "
-        "Provide accurate and concise answers using the library info. "
-        "Key links: Library website https://library.bennett.edu.in/ ; OPAC https://libraryopac.bennett.edu.in/ ; "
-        "e-Resources https://bennett.refread.com/#/home ; GD Rooms http://10.6.0.121/gdroombooking/ . "
+        "Provide accurate and concise answers based on the following FAQ and library information. "
+        "Key information: "
+        "- Library website: https://library.bennett.edu.in/. "
+        "- Library timings: Weekdays 8:00 AM to 12:00 AM (midnight), Weekends & Holidays 9:00 AM to 5:00 PM (may vary during vacations, check https://library.bennett.edu.in/index.php/working-hours/). "
+        "- Physical book search: Use https://libraryopac.bennett.edu.in/ to search for physical books. For specific searches (e.g., by title or topic like 'Python'), guide users to enter terms in the catalog's title field. Automatic searches are not possible. "
+        "- e-Resources: Access digital books and journal articles at https://bennett.refread.com/#/home, available 24/7 remotely. "
+        "- Group Discussion Rooms: Book at http://10.6.0.121/gdroombooking/. "
+        "FAQ: "
+        "- Borrowing books: Use automated kiosks in the library (see library tutorial for details). "
+        "- Return books: Use the 24/7 Drop Box outside the library (see library tutorial). "
+        "- Overdue checks: Automated overdue emails are sent, or check via OPAC at https://libraryopac.bennett.edu.in/. "
+        "- Journal articles: Accessible 24/7 remotely at https://bennett.refread.com/#/home. "
+        "- Printing/Scanning: Available at the LRC from 9:00 AM to 5:30 PM. For laptop printing, email libraryhelpdesk@bennett.edu.in for official printouts or visit M-Block Library for other services. "
+        "- Alumni access: Alumni can access the LRC for reference. "
+        "- Book checkout limits: Refer to the library tutorial for details. "
+        "- Overdue fines: Pay via BU Payment Portal and update library staff. "
+        "- Book recommendations: Submit at https://docs.google.com/forms/d/e/1FAIpQLSeC0-LPlWvUbYBcN834Ct9kYdC9Oebutv5VWRcTujkzFgRjZw/viewform. "
+        "- Appeal fines: Contact libraryhelpdesk@bennett.edu.in or visit the HelpDesk. "
+        "- Download e-Books: Download chapters at https://bennett.refread.com/#/home. "
+        "- Inter Library Loan: Available via DELNET, contact library for details. "
+        "- Non-BU interns: Can use the library for reading only. "
+        "- Finding books on shelves: Search via OPAC; books have Call Numbers, and shelves are marked (see tutorial). "
+        "- Snacks in LRC: Not allowed, but water bottles are permitted. "
+        "- Drop Box issues: Confirm return via auto-generated email; if none, contact libraryhelpdesk@bennett.edu.in. "
+        "- Reserve a book: Use the 'Place Hold' feature in OPAC at https://libraryopac.bennett.edu.in/. "
+        "If the question is unrelated, politely redirect to library-related topics. "
         f"User question: {prompt}"
     )
-    return {"contents":[{"parts":[{"text":system_instruction}]}]}
+    return {
+        "contents": [
+            {"parts": [{"text": system_instruction}]}
+        ]
+    }
+
 
 def call_gemini_api_v2(payload: dict) -> str:
+    """Call the Gemini API for general queries when no custom logic applies."""
     if not GEMINI_API_KEY:
         return "Gemini API Key is missing. Please set it in Streamlit secrets."
     url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
     try:
-        res = requests.post(url, json=payload,
-                            headers={"Content-Type":"application/json","X-goog-api-key":GEMINI_API_KEY},
-                            timeout=15)
-        if res.status_code == 200:
-            cand = res.json().get("candidates", [{}])
-            return cand[0].get("content", {}).get("parts", [{}])[0].get("text", "No answer found.")
-        return f"Connection error: {res.status_code} - {res.text}"
+        response = requests.post(
+            url,
+            json=payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-goog-api-key": GEMINI_API_KEY,
+            },
+            timeout=15,
+        )
+        if response.status_code == 200:
+            candidates = response.json().get("candidates", [{}])
+            answer = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "No answer found.")
+            return answer
+        else:
+            return f"Connection error: {response.status_code} - {response.text}"
     except Exception:
         return "A network error occurred. Please try again later."
 
+
 def get_topic_from_prompt(prompt: str) -> str:
-    pat = r"(?:on|par|about|ke bare mein|पर|के बारे में|का|की)\s+([a-zA-Z0-9\-अ-ह ]+)"
-    m = re.search(pat, prompt, re.IGNORECASE)
-    if m: return m.group(1).strip()
-    w = prompt.strip().split()
-    if len(w)>1: return w[-2] if w[-1].lower() in ["articles","पर","on"] else w[-1]
+    """Extract a topic from a natural language prompt."""
+    pattern = r"(?:on|par|about|ke bare mein|पर|के बारे में|का|की)\s+([a-zA-Z0-9\-अ-ह ]+)"
+    match = re.search(pattern, prompt, re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    words = prompt.strip().split()
+    if len(words) > 1:
+        return words[-2] if words[-1].lower() in ["articles", "पर", "on"] else words[-1]
     return prompt.strip()
 
+
 def handle_user_query(prompt: str) -> str:
+    """Process the user’s query and return an appropriate response."""
+    # Book search
     if "find books on" in prompt.lower() or "find book on" in prompt.lower():
-        topic = prompt.lower().replace("find books on","").replace("find book on","").strip()
-        books = google_books_search(topic, 5)
-        ans = f"### 📚 Books on **{topic.title()}** (Google Books)\n"
+        topic = (
+            prompt.lower()
+            .replace("find books on", "")
+            .replace("find book on", "")
+            .strip()
+        )
+        books = google_books_search(topic, limit=5)
+        answer = f"### 📚 Books on **{topic.title()}** (Google Books)\n"
         if books:
-            for b in books:
-                authors = f" by {b['authors']}" if b['authors'] else ""
-                pub = f", {b['publisher']}" if b['publisher'] else ""
-                year = f" ({b['year']})" if b['year'] else ""
-                ans += f"- [{b['title']}]({b['url']}){authors}{pub}{year}\n"
+            for book in books:
+                authors = f" by {book['authors']}" if book['authors'] else ""
+                pub = f", {book['publisher']}" if book['publisher'] else ""
+                year = f" ({book['year']})" if book['year'] else ""
+                answer += f"- [{book['title']}]({book['url']}){authors}{pub}{year}\n"
         else:
-            ans += "No relevant books found from Google Books.\n"
-        ans += "\n**For more, search [BU OPAC](https://libraryopac.bennett.edu.in/) or [Refread](https://bennett.refread.com/#/home).**"
-        return ans
+            answer += "No relevant books found from Google Books.\n"
+        answer += "\n**For more, search [BU OPAC](https://libraryopac.bennett.edu.in/) or [Refread](https://bennett.refread.com/#/home).**"
+        return answer
 
-    article_keywords = ["article","articles","research paper","journal","preprint",
-                        "open access","dataset","साहित्य","आर्टिकल","पत्रिका","जर्नल","शोध","पेपर"]
-    if any(k in prompt.lower() for k in article_keywords):
+    # Article/research paper/journal search
+    article_keywords = [
+        "article",
+        "articles",
+        "research paper",
+        "journal",
+        "preprint",
+        "open access",
+        "dataset",
+        "साहित्य",
+        "आर्टिकल",
+        "पत्रिका",
+        "जर्नल",
+        "शोध",
+        "पेपर",
+    ]
+    if any(kw in prompt.lower() for kw in article_keywords):
         topic = get_topic_from_prompt(prompt)
-        if not topic or len(topic)<2:
+        if not topic or len(topic) < 2:
             return "Please specify a topic for article search. उदाहरण: 'articles on AI' या 'हिंदी साहित्य पर articles'।"
-        ans = f"### 🟦 Bennett University e-Resources (Refread)\nFind e-books and journal articles on **'{topic.title()}'** 24/7 here: [Refread](https://bennett.refread.com/#/home)\n\n"
+        topic = topic.strip()
 
-        g = google_books_search(topic, 3)
-        ans += "### 📚 Books from Google Books\n"
-        ans += "".join([f"- [{b['title']}]({b['url']})"
-                        f"{' by '+b['authors'] if b['authors'] else ''}"
-                        f"{', '+b['publisher'] if b['publisher'] else ''}"
-                        f"{' ('+b['year']+')' if b['year'] else ''}\n" for b in g]) or "No relevant books found from Google Books.\n"
+        answer = f"### 🟦 Bennett University e-Resources (Refread)\n"
+        answer += f"Find e-books and journal articles on **'{topic.title()}'** 24/7 here: [Refread](https://bennett.refread.com/#/home)\n\n"
 
-        c = core_article_search(topic, 3)
-        ans += "### 🌐 Open Access (CORE)\n"
-        ans += "".join([f"- [{x.get('title','No Title')}]({x.get('downloadUrl', (x.get('urls',[{}])[0].get('url','#')))})"
-                        f" {'('+x.get('createdDate','')[:4]+')' if x.get('createdDate') else ''}\n" for x in c]) or "No recent articles found on this topic from CORE.\n"
+        # GOOGLE BOOKS
+        google_books = google_books_search(topic, limit=3)
+        answer += "### 📚 Books from Google Books\n"
+        if google_books:
+            for book in google_books:
+                authors = f" by {book['authors']}" if book['authors'] else ""
+                pub = f", {book['publisher']}" if book['publisher'] else ""
+                year = f" ({book['year']})" if book['year'] else ""
+                answer += f"- [{book['title']}]({book['url']}){authors}{pub}{year}\n"
+        else:
+            answer += "No relevant books found from Google Books.\n"
 
-        a = arxiv_article_search(topic, 3)
-        ans += "### 📄 Preprints (arXiv)\n"
-        ans += "".join([f"- [{x['title']}]({x['url']}) ({x['year']})\n" for x in a]) or "No recent preprints found on this topic from arXiv.\n"
+        # CORE
+        core_results = core_article_search(topic, limit=3)
+        answer += "### 🌐 Open Access (CORE)\n"
+        if core_results:
+            for art in core_results:
+                title = art.get("title", "No Title")
+                url = art.get("downloadUrl", art.get("urls", [{}])[0].get("url", "#"))
+                year = art.get("createdDate", "")[:4]
+                answer += f"- [{title}]({url}) {'(' + year + ')' if year else ''}\n"
+        else:
+            answer += "No recent articles found on this topic from CORE.\n"
 
-        d = doaj_article_search(topic, 3)
-        ans += "### 📚 Open Access Journals (DOAJ)\n"
-        ans += "".join([f"- [{x['title']}]({x['url']}) ({x['year']}) - {x['journal']}\n" for x in d]) or "No open access journal articles found on this topic from DOAJ.\n"
+        # arXiv
+        arxiv_results = arxiv_article_search(topic, limit=3)
+        answer += "### 📄 Preprints (arXiv)\n"
+        if arxiv_results:
+            for art in arxiv_results:
+                answer += f"- [{art['title']}]({art['url']}) ({art['year']})\n"
+        else:
+            answer += "No recent preprints found on this topic from arXiv.\n"
 
-        dc = datacite_article_search(topic, 3)
-        ans += "### 🏷️ Research Data/Articles (DataCite)\n"
-        ans += "".join([f"- [{x['title']}]({x['url']}) ({x['year']}) - {x['journal']}\n" for x in dc]) or "No research datasets/articles found on this topic from DataCite.\n"
-        return ans
+        # DOAJ
+        doaj_results = doaj_article_search(topic, limit=3)
+        answer += "### 📚 Open Access Journals (DOAJ)\n"
+        if doaj_results:
+            for art in doaj_results:
+                answer += f"- [{art['title']}]({art['url']}) ({art['year']}) - {art['journal']}\n"
+        else:
+            answer += "No open access journal articles found on this topic from DOAJ.\n"
 
-    return call_gemini_api_v2(create_payload(prompt))
+        # DataCite
+        datacite_results = datacite_article_search(topic, limit=3)
+        answer += "### 🏷️ Research Data/Articles (DataCite)\n"
+        if datacite_results:
+            for art in datacite_results:
+                answer += f"- [{art['title']}]({art['url']}) ({art['year']}) - {art['journal']}\n"
+        else:
+            answer += "No research datasets/articles found on this topic from DataCite.\n"
 
-# ==== CHAT ====
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+        return answer
 
-for m in st.session_state.messages:
-    with st.chat_message(m["role"]):
-        st.markdown(m["content"], unsafe_allow_html=True)
+    # General (FAQ etc) - Gemini
+    payload = create_payload(prompt)
+    return call_gemini_api_v2(payload)
 
-# keep input visible (padding already added above)
-prompt = st.chat_input("Type your query about books, research papers, journals, library services...")
-if prompt:
-    st.session_state.messages.append({"role":"user","content":prompt})
-    with st.spinner("Ashu is typing..."):
-        answer = handle_user_query(prompt)
-    st.session_state.messages.append({"role":"assistant","content":answer})
-    st.rerun()
 
-# ==== CUSTOM FOOTER ====
-st.markdown('<div class="custom-footer">Build in Ashutosh Mishra</div>', unsafe_allow_html=True)
+def render_app() -> None:
+    """Render the entire Streamlit app layout and handle interaction."""
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+
+    # Display profile and welcome
+    st.markdown(
+        """
+        <div class="profile-container">
+            <img src="https://library.bennett.edu.in/wp-content/uploads/2024/05/WhatsApp-Image-2024-05-01-at-12.41.02-PM-e1714549052999-150x150.jpeg" 
+                 width="150" 
+                 style="border-radius: 50%; border: 3px solid #2e86c1; margin-bottom: 1rem;">
+            <h1 style="color: #2e86c1; margin-bottom: 0.5rem; font-size: 2em;">Ashu AI Assistant at Bennett University Library</h1>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    show_quick_actions()
+
+    st.markdown(
+        """
+        <div style="text-align: center; margin: 2rem 0;">
+            <p style="font-size: 1.1em;">Hello! I am Ashu, your AI assistant at Bennett University Library. How can I help you today?</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Display previous chat messages
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"], unsafe_allow_html=True)
+
+    # Text chat input only (voice features removed)
+    st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
+    prompt = st.chat_input("Type your query about books, research papers, journals, library services...")
+    if prompt:
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.spinner("Ashu is typing..."):
+            answer = handle_user_query(prompt)
+        st.session_state.messages.append({"role": "assistant", "content": answer})
+        st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # Footer
+    st.markdown(
+        """
+        <div class="footer">
+            <div style="margin: 0.5rem 0;">
+                © 2025 - Ashutosh Mishra | All Rights Reserved
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+if __name__ == "__main__":
+    render_app()
