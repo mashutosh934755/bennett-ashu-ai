@@ -3,33 +3,71 @@ import requests
 import re
 import feedparser  # pip install feedparser
 
-# ==== GET KEYS FROM SECRETS (never paste in code) ====
+# ==== KEYS FROM SECRETS ====
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
 CORE_API_KEY = st.secrets.get("CORE_API_KEY", "")
 GOOGLE_BOOKS_API_KEY = st.secrets.get("GOOGLE_BOOKS_API_KEY", "")
 
-# ==== CSS ====
+# ==== CSS (compact + brand + hide streamlit chrome) ====
 st.markdown("""
 <style>
-    :root { --header-color: #2e86c1; }
-    .main .block-container { max-width: 900px; padding: 2rem 1rem; }
-    .profile-container { text-align: center; margin-bottom: 1rem; }
-    .quick-actions-row { display: flex; justify-content: center; gap: 10px; margin: 1rem 0 2rem 0; width: 100%; }
-    .quick-action-btn { background-color: #2e86c1; color: white !important; padding: 10px 15px; border-radius: 20px; border: none; box-shadow: 0 2px 5px rgba(0,0,0,0.1); transition: all 0.3s; font-size: 14px; text-decoration: none; text-align: center; cursor: pointer; white-space: nowrap; flex: 1; max-width: 200px; }
-    .quick-action-btn:hover { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.15); }
-    .chat-container { margin: 2rem 0; }
-    .static-chat-input { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); width: 100%; max-width: 800px; z-index: 100; }
-    .stChatInput input { border-radius: 25px !important; padding: 12px 20px !important; }
-    .stChatInput button { border-radius: 50% !important; background-color: var(--header-color) !important; }
-    .footer { position: fixed; bottom: 0; left: 0; right: 0; text-align: center; color: #666; padding: 1rem; background-color: white; z-index: 99; }
-    @media (max-width: 700px) {
-        .main .block-container { padding: 0.5rem 0.2rem; }
-        .static-chat-input { max-width: 98vw; }
-    }
+  :root{ --brand-a:#960820; --brand-b:#0D335E; }
+
+  /* Compact app like a mobile card (fits iframe modal) */
+  .main .block-container{
+      max-width:460px;
+      padding:1rem .75rem;
+  }
+
+  /* Header */
+  .profile-container{ text-align:center; margin:.25rem 0 .5rem 0; }
+  .profile-container img{
+      width:110px; height:auto; border-radius:50%;
+      border:3px solid var(--brand-b); margin-bottom:.5rem;
+  }
+  .profile-container h1{
+      color:var(--brand-b) !important;
+      font-size:1.35rem !important;
+      line-height:1.25; margin:0 .25rem;
+  }
+
+  /* Quick actions – wrap and smaller pills so they never cut */
+  .quick-actions-row{
+      display:flex; flex-wrap:wrap; justify-content:center;
+      gap:8px; margin:.5rem 0 1rem 0; width:100%;
+  }
+  .quick-action-btn{
+      background:var(--brand-b); color:#fff !important;
+      padding:8px 12px; border-radius:18px; border:0;
+      box-shadow:0 2px 5px rgba(0,0,0,.08);
+      transition:all .2s; font-size:13px; text-decoration:none; text-align:center;
+      cursor:pointer; white-space:nowrap; flex:1 1 46%; max-width:46%;
+  }
+  @media (max-width:400px){ .quick-action-btn{ flex:1 1 100%; max-width:100%; } }
+  .quick-action-btn:hover{ transform:translateY(-1px); box-shadow:0 4px 8px rgba(0,0,0,.12); }
+
+  /* Chat input – not fixed (iframe footer issues avoided) */
+  .static-chat-input{ position:unset !important; }
+  .stChatInput input{ border-radius:24px !important; padding:10px 16px !important; }
+  .stChatInput button{ border-radius:50% !important; background:var(--brand-b) !important; }
+
+  /* Section text */
+  .chat-container{ margin:1rem 0; }
+  p, li{ color:#2b2b2b; }
+
+  /* ===== Hide Streamlit chrome (footer, toolbar, fullscreen) ===== */
+  #MainMenu, header, footer {visibility:hidden !important;}
+  [data-testid="stToolbar"], [data-testid="stDecoration"]{ display:none !important; }
+  .viewerBadge_container__1QSob, .viewerBadge_link__1S137,
+  .stApp a[href*="fullscreen"], .stApp button[title="View fullscreen"],
+  .stDeployButton, .stAppDeployButton { display:none !important; }
+
+  /* No horizontal scrollbar inside iframe */
+  html, body, .stApp{ overflow-x:hidden; }
 </style>
 """, unsafe_allow_html=True)
 
-# ==== BUTTONS ====
+# ==== QUICK ACTIONS ====
 def create_quick_action_button(text, url):
     return f'<a href="{url}" target="_blank" class="quick-action-btn">{text}</a>'
 
@@ -47,7 +85,7 @@ def show_quick_actions():
         unsafe_allow_html=True
     )
 
-# ==== API FUNCTIONS ====
+# ==== SEARCH HELPERS ====
 def google_books_search(query, limit=5):
     if not GOOGLE_BOOKS_API_KEY:
         return []
@@ -71,7 +109,7 @@ def google_books_search(query, limit=5):
                 "year": year
             })
         return result
-    except Exception as e:
+    except Exception:
         return []
 
 def core_article_search(query, limit=5):
@@ -83,7 +121,7 @@ def core_article_search(query, limit=5):
     try:
         r = requests.get(url, headers=headers, params=params, timeout=15)
         if r.status_code == 200:
-            return r.json()["results"]
+            return r.json().get("results", [])
         else:
             return []
     except Exception:
@@ -134,7 +172,8 @@ def datacite_article_search(query, limit=5):
             result = []
             for item in items:
                 attrs = item.get("attributes", {})
-                title = (attrs.get("titles", [{}])[0].get("title", "No Title")) if attrs.get("titles") else "No Title"
+                titles = attrs.get("titles", [{}])
+                title = titles[0].get("title", "No Title") if titles else "No Title"
                 url2 = attrs.get("url", "#")
                 publisher = attrs.get("publisher", "")
                 year = attrs.get("publicationYear", "")
@@ -145,7 +184,8 @@ def datacite_article_search(query, limit=5):
     except Exception:
         return []
 
-def create_payload(prompt):
+# ==== LLM PAYLOAD ====
+def create_payload(prompt: str):
     system_instruction = (
         "You are Ashu, an AI assistant for Bennett University Library. "
         "Provide accurate and concise answers based on the following FAQ and library information. "
@@ -176,11 +216,7 @@ def create_payload(prompt):
         "If the question is unrelated, politely redirect to library-related topics. "
         f"User question: {prompt}"
     )
-    return {
-        "contents": [
-            {"parts": [{"text": system_instruction}]}
-        ]
-    }
+    return {"contents": [{"parts": [{"text": system_instruction}]}]}
 
 def call_gemini_api_v2(payload):
     if not GEMINI_API_KEY:
@@ -188,24 +224,20 @@ def call_gemini_api_v2(payload):
     url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
     try:
         response = requests.post(
-            url,
-            json=payload,
-            headers={
-                "Content-Type": "application/json",
-                "X-goog-api-key": GEMINI_API_KEY
-            },
+            url, json=payload,
+            headers={"Content-Type": "application/json", "X-goog-api-key": GEMINI_API_KEY},
             timeout=15
         )
         if response.status_code == 200:
             candidates = response.json().get("candidates", [{}])
-            answer = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "No answer found.")
-            return answer
+            return candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "No answer found.")
         else:
             return f"Connection error: {response.status_code} - {response.text}"
-    except Exception as e:
+    except Exception:
         return "A network error occurred. Please try again later."
 
-def get_topic_from_prompt(prompt):
+# ==== UTIL ====
+def get_topic_from_prompt(prompt: str) -> str:
     pattern = r"(?:on|par|about|ke bare mein|पर|के बारे में|का|की)\s+([a-zA-Z0-9\-अ-ह ]+)"
     match = re.search(pattern, prompt, re.IGNORECASE)
     if match:
@@ -215,15 +247,11 @@ def get_topic_from_prompt(prompt):
         return words[-2] if words[-1].lower() in ["articles", "पर", "on"] else words[-1]
     return prompt.strip()
 
-def handle_user_query(prompt):
+# ==== ROUTER ====
+def handle_user_query(prompt: str) -> str:
     # Book search
     if "find books on" in prompt.lower() or "find book on" in prompt.lower():
-        topic = (
-            prompt.lower()
-            .replace("find books on", "")
-            .replace("find book on", "")
-            .strip()
-        )
+        topic = prompt.lower().replace("find books on","").replace("find book on","").strip()
         books = google_books_search(topic, limit=5)
         answer = f"### 📚 Books on **{topic.title()}** (Google Books)\n"
         if books:
@@ -234,23 +262,20 @@ def handle_user_query(prompt):
                 answer += f"- [{book['title']}]({book['url']}){authors}{pub}{year}\n"
         else:
             answer += "No relevant books found from Google Books.\n"
-        answer += f"\n**For more, search [BU OPAC](https://libraryopac.bennett.edu.in/) or [Refread](https://bennett.refread.com/#/home).**"
+        answer += "\n**For more, search [BU OPAC](https://libraryopac.bennett.edu.in/) or [Refread](https://bennett.refread.com/#/home).**"
         return answer
 
-    # Article/research paper/journal
-    article_keywords = [
-        "article", "articles", "research paper", "journal", "preprint", "open access", "dataset", "साहित्य", "आर्टिकल", "पत्रिका", "जर्नल", "शोध", "पेपर"
-    ]
+    # Article / research paper / journal
+    article_keywords = ["article","articles","research paper","journal","preprint","open access","dataset","साहित्य","आर्टिकल","पत्रिका","जर्नल","शोध","पेपर"]
     if any(kw in prompt.lower() for kw in article_keywords):
         topic = get_topic_from_prompt(prompt)
         if not topic or len(topic) < 2:
             return "Please specify a topic for article search. उदाहरण: 'articles on AI' या 'हिंदी साहित्य पर articles'।"
         topic = topic.strip()
 
-        answer = f"### 🟦 Bennett University e-Resources (Refread)\n"
+        answer = "### 🟦 Bennett University e-Resources (Refread)\n"
         answer += f"Find e-books and journal articles on **'{topic.title()}'** 24/7 here: [Refread](https://bennett.refread.com/#/home)\n\n"
 
-        # GOOGLE BOOKS
         google_books = google_books_search(topic, limit=3)
         answer += "### 📚 Books from Google Books\n"
         if google_books:
@@ -262,7 +287,6 @@ def handle_user_query(prompt):
         else:
             answer += "No relevant books found from Google Books.\n"
 
-        # CORE
         core_results = core_article_search(topic, limit=3)
         answer += "### 🌐 Open Access (CORE)\n"
         if core_results:
@@ -274,7 +298,6 @@ def handle_user_query(prompt):
         else:
             answer += "No recent articles found on this topic from CORE.\n"
 
-        # arXiv
         arxiv_results = arxiv_article_search(topic, limit=3)
         answer += "### 📄 Preprints (arXiv)\n"
         if arxiv_results:
@@ -283,7 +306,6 @@ def handle_user_query(prompt):
         else:
             answer += "No recent preprints found on this topic from arXiv.\n"
 
-        # DOAJ
         doaj_results = doaj_article_search(topic, limit=3)
         answer += "### 📚 Open Access Journals (DOAJ)\n"
         if doaj_results:
@@ -292,7 +314,6 @@ def handle_user_query(prompt):
         else:
             answer += "No open access journal articles found on this topic from DOAJ.\n"
 
-        # DataCite
         datacite_results = datacite_article_search(topic, limit=3)
         answer += "### 🏷️ Research Data/Articles (DataCite)\n"
         if datacite_results:
@@ -303,37 +324,36 @@ def handle_user_query(prompt):
 
         return answer
 
-    # General (FAQ etc) - Gemini
+    # General (FAQ) via Gemini
     payload = create_payload(prompt)
     return call_gemini_api_v2(payload)
 
+# ==== APP BODY ====
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
 st.markdown("""
 <div class="profile-container">
-    <img src="https://library.bennett.edu.in/wp-content/uploads/2024/05/WhatsApp-Image-2024-05-01-at-12.41.02-PM-e1714549052999-150x150.jpeg" 
-         width="150" 
-         style="border-radius: 50%; border: 3px solid #2e86c1; margin-bottom: 1rem;">
-    <h1 style="color: #2e86c1; margin-bottom: 0.5rem; font-size: 2em;">Ashu AI Assistant at Bennett University Library</h1>
+  <img src="https://library.bennett.edu.in/wp-content/uploads/2024/05/WhatsApp-Image-2024-05-01-at-12.41.02-PM-e1714549052999-150x150.jpeg" width="150" style="border-radius:50%; border:3px solid var(--brand-b); margin-bottom:.5rem;">
+  <h1>Ashu AI Assistant at Bennett University Library</h1>
 </div>
 """, unsafe_allow_html=True)
 
 show_quick_actions()
 
 st.markdown("""
-<div style="text-align: center; margin: 2rem 0;">
-    <p style="font-size: 1.1em;">Hello! I am Ashu, your AI assistant at Bennett University Library. How can I help you today?</p>
+<div style="text-align:center; margin:1rem 0;">
+  <p style="font-size:1rem;">Hello! I am Ashu, your AI assistant at Bennett University Library. How can I help you today?</p>
 </div>
 """, unsafe_allow_html=True)
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+        st.markdown(message["content"], unsafe_allow_html=True)
 
+# Not fixed; simply render input
 st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
 prompt = st.chat_input("Type your query about books, research papers, journals, library services...")
-
 if prompt:
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.spinner("Ashu is typing..."):
@@ -342,10 +362,5 @@ if prompt:
     st.rerun()
 st.markdown('</div>', unsafe_allow_html=True)
 
-st.markdown("""
-<div class="footer">
-    <div style="margin: 0.5rem 0;">
-        © 2025 - Ashutosh Mishra | All Rights Reserved
-    </div>
-</div>
-""", unsafe_allow_html=True)
+# Optional site footer (inside iframe). Keep minimal or comment out to remove.
+# st.markdown("""<div style="text-align:center;color:#666;margin-top:.5rem;font-size:.85rem;">© 2025 - Ashutosh Mishra</div>""", unsafe_allow_html=True)
