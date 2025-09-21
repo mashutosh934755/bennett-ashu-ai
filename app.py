@@ -1,70 +1,38 @@
 """
-voice_agent_app.py
-===================
+voice_agent_app.py (text-only)
+==============================
 
 This Streamlit application builds on the existing Ashu AI assistant
-originally written for the Bennett University Library.  In addition to
-handling text based queries, the app now includes optional voice
-interaction.  Users can speak their queries directly into their
-browser, have the audio automatically transcribed to text, and then
-hear the assistant's reply read aloud.  The implementation uses two
-public Streamlit components:
+originally written for the Bennett University Library. The app now
+focuses **only on text-based** queries (all voice features removed).
 
-* **audio_recorder_streamlit** – A custom component that records audio
-  from the user's microphone and returns the raw WAV bytes.  The
-  project’s PyPI page explains that this component allows users to
-  register an audio utterance and provides a simple API via the
-  ``audio_recorder()`` function【120745313927835†L80-L97】.
-* **streamlit-TTS** – A component that converts text into spoken
-  audio using the Google Text‑to‑Speech engine.  The ``text_to_speech``
-  helper function wraps the conversion and playback; it will convert
-  a string into audio and automatically play it in the browser
-  according to the library’s documentation【878532431386352†L74-L129】.
+Users can type questions and receive answers. It integrates with
+Google Books, CORE, arXiv, DOAJ, and DataCite for discovery, and can
+fallback to Gemini for general library FAQs when custom logic isn't
+matched.
 
-For speech recognition the standard Python ``speech_recognition``
-library is used.  It supports offline recognition engines as well as
-remote services like the free Google Speech‑to‑Text API.  When a
-recording is captured the app attempts to transcribe it via
-``recognize_google()``.  If speech recognition fails for any reason
-the user is asked to try again.
-
-You will need to install the following dependencies before running
-this application:
+Dependencies to install before running this application:
 
 ```
-pip install streamlit audio-recorder-streamlit streamlit-TTS
-pip install SpeechRecognition
+pip install streamlit requests feedparser
 ```
 
-In addition, make sure your browser has permission to access the
-microphone.  The voice interaction is entirely optional; users may
-continue to type queries in the chat input as before.
+(Voice-specific packages like `audio-recorder-streamlit`,
+`streamlit-TTS`, and `SpeechRecognition` are **not** required.)
+
+Make sure to set your API keys in Streamlit secrets:
+- `GEMINI_API_KEY`
+- `CORE_API_KEY`
+- `GOOGLE_BOOKS_API_KEY`
+
+The app remains keyboard-first and mobile-friendly.
 """
 
-import io
 import re
 import requests
 import feedparser
 
 import streamlit as st
-
-# Third‑party libraries for voice I/O
-# Some environments may not include the optional audio recorder
-# custom component.  We try to import it, otherwise fall back
-# to the built‑in st.audio_input widget.
-try:
-    from audio_recorder_streamlit import audio_recorder  # type: ignore
-except Exception:
-    audio_recorder = None
-try:
-    from streamlit_TTS import text_to_speech  # type: ignore
-except ImportError:
-    text_to_speech = None
-try:
-    import speech_recognition as sr  # type: ignore
-except ImportError:
-    sr = None
-
 
 # ==== GET KEYS FROM SECRETS (never paste in code) ====
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
@@ -370,7 +338,7 @@ def handle_user_query(prompt: str) -> str:
                 title = art.get("title", "No Title")
                 url = art.get("downloadUrl", art.get("urls", [{}])[0].get("url", "#"))
                 year = art.get("createdDate", "")[:4]
-                answer += f"- [{title}]({url}) {'('+year+')' if year else ''}\n"
+                answer += f"- [{title}]({url}) {'(' + year + ')' if year else ''}\n"
         else:
             answer += "No recent articles found on this topic from CORE.\n"
 
@@ -408,36 +376,6 @@ def handle_user_query(prompt: str) -> str:
     return call_gemini_api_v2(payload)
 
 
-def transcribe_audio(audio_bytes: bytes) -> str:
-    """
-    Transcribe recorded audio into text using SpeechRecognition.
-
-    If SpeechRecognition is not installed or transcription fails, an
-    empty string is returned.
-    """
-    if sr is None:
-        return ""
-    recognizer = sr.Recognizer()
-    try:
-        with sr.AudioFile(io.BytesIO(audio_bytes)) as source:
-            audio_data = recognizer.record(source)
-            # use Google's free recognizer; no API key required for small requests
-            text = recognizer.recognize_google(audio_data)
-            return text
-    except Exception:
-        return ""
-
-
-def speak_text(text: str) -> None:
-    """Convert text to speech and play it back using streamlit‑TTS."""
-    if text_to_speech is not None:
-        # The library will automatically play the audio in the browser.
-        try:
-            text_to_speech(text=text, language="en", wait=False)
-        except Exception:
-            pass
-
-
 def render_app() -> None:
     """Render the entire Streamlit app layout and handle interaction."""
     if "messages" not in st.session_state:
@@ -472,40 +410,7 @@ def render_app() -> None:
         with st.chat_message(message["role"]):
             st.markdown(message["content"], unsafe_allow_html=True)
 
-    # Voice recorder section.  When possible, allow users to speak their query.
-    st.markdown("**Speak your query (optional):**")
-    audio_bytes = None
-    # Use custom component if available
-    if audio_recorder is not None:
-        audio_bytes = audio_recorder(
-            text="",
-            recording_color="#e8b62c",
-            neutral_color="#2e86c1",
-            icon_name="microphone",
-            icon_size="2x",
-        )
-    else:
-        # Fall back to built‑in st.audio_input.  It returns an UploadedFile.
-        try:
-            audio_file = st.audio_input("Record a voice message")  # type: ignore[attr-defined]
-            if audio_file is not None:
-                audio_bytes = audio_file.getvalue()
-        except Exception:
-            audio_bytes = None
-
-    # If we have an audio recording, transcribe and answer
-    if audio_bytes:
-        transcript = transcribe_audio(audio_bytes)
-        if transcript:
-            st.session_state.messages.append({"role": "user", "content": transcript})
-            with st.spinner("Ashu is typing..."):
-                answer = handle_user_query(transcript)
-            st.session_state.messages.append({"role": "assistant", "content": answer})
-            # Speak the answer
-            speak_text(answer)
-            st.rerun()
-
-    # Text chat input
+    # Text chat input only (voice features removed)
     st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
     prompt = st.chat_input("Type your query about books, research papers, journals, library services...")
     if prompt:
@@ -513,8 +418,6 @@ def render_app() -> None:
         with st.spinner("Ashu is typing..."):
             answer = handle_user_query(prompt)
         st.session_state.messages.append({"role": "assistant", "content": answer})
-        # Speak the answer for typed queries as well
-        speak_text(answer)
         st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
