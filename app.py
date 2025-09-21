@@ -49,9 +49,12 @@ import feedparser
 import streamlit as st
 
 # Third‑party libraries for voice I/O
+# Some environments may not include the optional audio recorder
+# custom component.  We try to import it, otherwise fall back
+# to the built‑in st.audio_input widget.
 try:
     from audio_recorder_streamlit import audio_recorder  # type: ignore
-except ImportError:
+except Exception:
     audio_recorder = None
 try:
     from streamlit_TTS import text_to_speech  # type: ignore
@@ -469,9 +472,11 @@ def render_app() -> None:
         with st.chat_message(message["role"]):
             st.markdown(message["content"], unsafe_allow_html=True)
 
-    # Voice recorder section.  Only render if the component is available.
+    # Voice recorder section.  When possible, allow users to speak their query.
+    st.markdown("**Speak your query (optional):**")
+    audio_bytes = None
+    # Use custom component if available
     if audio_recorder is not None:
-        st.markdown("**Speak your query (optional):**")
         audio_bytes = audio_recorder(
             text="",
             recording_color="#e8b62c",
@@ -479,17 +484,26 @@ def render_app() -> None:
             icon_name="microphone",
             icon_size="2x",
         )
-        if audio_bytes:
-            # Process the audio only when it is newly recorded
-            transcript = transcribe_audio(audio_bytes)
-            if transcript:
-                st.session_state.messages.append({"role": "user", "content": transcript})
-                with st.spinner("Ashu is typing..."):
-                    answer = handle_user_query(transcript)
-                st.session_state.messages.append({"role": "assistant", "content": answer})
-                # Speak the answer
-                speak_text(answer)
-                st.rerun()
+    else:
+        # Fall back to built‑in st.audio_input.  It returns an UploadedFile.
+        try:
+            audio_file = st.audio_input("Record a voice message")  # type: ignore[attr-defined]
+            if audio_file is not None:
+                audio_bytes = audio_file.getvalue()
+        except Exception:
+            audio_bytes = None
+
+    # If we have an audio recording, transcribe and answer
+    if audio_bytes:
+        transcript = transcribe_audio(audio_bytes)
+        if transcript:
+            st.session_state.messages.append({"role": "user", "content": transcript})
+            with st.spinner("Ashu is typing..."):
+                answer = handle_user_query(transcript)
+            st.session_state.messages.append({"role": "assistant", "content": answer})
+            # Speak the answer
+            speak_text(answer)
+            st.rerun()
 
     # Text chat input
     st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
