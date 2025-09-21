@@ -1,7 +1,67 @@
-import streamlit as st
-import requests
+"""
+voice_agent_app.py
+===================
+
+This Streamlit application builds on the existing Ashu AI assistant
+originally written for the Bennett University Library.  In addition to
+handling text based queries, the app now includes optional voice
+interaction.  Users can speak their queries directly into their
+browser, have the audio automatically transcribed to text, and then
+hear the assistant's reply read aloud.  The implementation uses two
+public Streamlit components:
+
+* **audio_recorder_streamlit** – A custom component that records audio
+  from the user's microphone and returns the raw WAV bytes.  The
+  project’s PyPI page explains that this component allows users to
+  register an audio utterance and provides a simple API via the
+  ``audio_recorder()`` function【120745313927835†L80-L97】.
+* **streamlit-TTS** – A component that converts text into spoken
+  audio using the Google Text‑to‑Speech engine.  The ``text_to_speech``
+  helper function wraps the conversion and playback; it will convert
+  a string into audio and automatically play it in the browser
+  according to the library’s documentation【878532431386352†L74-L129】.
+
+For speech recognition the standard Python ``speech_recognition``
+library is used.  It supports offline recognition engines as well as
+remote services like the free Google Speech‑to‑Text API.  When a
+recording is captured the app attempts to transcribe it via
+``recognize_google()``.  If speech recognition fails for any reason
+the user is asked to try again.
+
+You will need to install the following dependencies before running
+this application:
+
+```
+pip install streamlit audio-recorder-streamlit streamlit-TTS
+pip install SpeechRecognition
+```
+
+In addition, make sure your browser has permission to access the
+microphone.  The voice interaction is entirely optional; users may
+continue to type queries in the chat input as before.
+"""
+
+import io
 import re
-import feedparser  # pip install feedparser
+import requests
+import feedparser
+
+import streamlit as st
+
+# Third‑party libraries for voice I/O
+try:
+    from audio_recorder_streamlit import audio_recorder  # type: ignore
+except ImportError:
+    audio_recorder = None
+try:
+    from streamlit_TTS import text_to_speech  # type: ignore
+except ImportError:
+    text_to_speech = None
+try:
+    import speech_recognition as sr  # type: ignore
+except ImportError:
+    sr = None
+
 
 # ==== GET KEYS FROM SECRETS (never paste in code) ====
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
@@ -9,7 +69,8 @@ CORE_API_KEY = st.secrets.get("CORE_API_KEY", "")
 GOOGLE_BOOKS_API_KEY = st.secrets.get("GOOGLE_BOOKS_API_KEY", "")
 
 # ==== CSS ====
-st.markdown("""
+st.markdown(
+    """
 <style>
     :root { --header-color: #2e86c1; }
     .main .block-container { max-width: 900px; padding: 2rem 1rem; }
@@ -27,28 +88,35 @@ st.markdown("""
         .static-chat-input { max-width: 98vw; }
     }
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 # ==== BUTTONS ====
-def create_quick_action_button(text, url):
+def create_quick_action_button(text: str, url: str) -> str:
+    """Return an HTML anchor styled as a quick action button."""
     return f'<a href="{url}" target="_blank" class="quick-action-btn">{text}</a>'
 
-def show_quick_actions():
+
+def show_quick_actions() -> None:
+    """Render quick links to common library resources."""
     quick_actions = [
         ("Find e-Resources", "https://bennett.refread.com/#/home"),
         ("Find Books", "https://libraryopac.bennett.edu.in/"),
         ("Working Hours", "https://library.bennett.edu.in/index.php/working-hours/"),
-        ("Book GD Rooms", "http://10.6.0.121/gdroombooking/")
+        ("Book GD Rooms", "http://10.6.0.121/gdroombooking/"),
     ]
     st.markdown(
-        '<div class="quick-actions-row">' +
-        "".join([create_quick_action_button(t, u) for t, u in quick_actions]) +
-        '</div>',
-        unsafe_allow_html=True
+        '<div class="quick-actions-row">'
+        + "".join([create_quick_action_button(t, u) for t, u in quick_actions])
+        + '</div>',
+        unsafe_allow_html=True,
     )
 
+
 # ==== API FUNCTIONS ====
-def google_books_search(query, limit=5):
+def google_books_search(query: str, limit: int = 5):
+    """Search Google Books API and return a list of book metadata dictionaries."""
     if not GOOGLE_BOOKS_API_KEY:
         return []
     url = f"https://www.googleapis.com/books/v1/volumes?q={query}&maxResults={limit}&key={GOOGLE_BOOKS_API_KEY}"
@@ -68,13 +136,15 @@ def google_books_search(query, limit=5):
                 "authors": authors,
                 "url": link,
                 "publisher": publisher,
-                "year": year
+                "year": year,
             })
         return result
-    except Exception as e:
+    except Exception:
         return []
 
-def core_article_search(query, limit=5):
+
+def core_article_search(query: str, limit: int = 5):
+    """Search the CORE API for open access articles."""
     if not CORE_API_KEY:
         return []
     url = "https://api.core.ac.uk/v3/search/works"
@@ -83,13 +153,15 @@ def core_article_search(query, limit=5):
     try:
         r = requests.get(url, headers=headers, params=params, timeout=15)
         if r.status_code == 200:
-            return r.json()["results"]
+            return r.json().get("results", [])
         else:
             return []
     except Exception:
         return []
 
-def arxiv_article_search(query, limit=5):
+
+def arxiv_article_search(query: str, limit: int = 5):
+    """Search arXiv for preprints matching the query."""
     url = f"http://export.arxiv.org/api/query?search_query=all:{query}&start=0&max_results={limit}"
     try:
         feed = feedparser.parse(url)
@@ -104,7 +176,9 @@ def arxiv_article_search(query, limit=5):
     except Exception:
         return []
 
-def doaj_article_search(query, limit=5):
+
+def doaj_article_search(query: str, limit: int = 5):
+    """Search DOAJ for open access journal articles."""
     url = f"https://doaj.org/api/search/articles/title:{query}"
     try:
         resp = requests.get(url, timeout=10)
@@ -125,7 +199,9 @@ def doaj_article_search(query, limit=5):
     except Exception:
         return []
 
-def datacite_article_search(query, limit=5):
+
+def datacite_article_search(query: str, limit: int = 5):
+    """Search DataCite for research datasets or articles."""
     url = f"https://api.datacite.org/dois?query={query}&page[size]={limit}"
     try:
         resp = requests.get(url, timeout=10)
@@ -134,7 +210,8 @@ def datacite_article_search(query, limit=5):
             result = []
             for item in items:
                 attrs = item.get("attributes", {})
-                title = (attrs.get("titles", [{}])[0].get("title", "No Title")) if attrs.get("titles") else "No Title"
+                titles = attrs.get("titles", [{}])
+                title = titles[0].get("title", "No Title") if titles else "No Title"
                 url2 = attrs.get("url", "#")
                 publisher = attrs.get("publisher", "")
                 year = attrs.get("publicationYear", "")
@@ -145,7 +222,9 @@ def datacite_article_search(query, limit=5):
     except Exception:
         return []
 
-def create_payload(prompt):
+
+def create_payload(prompt: str):
+    """Build the payload for Gemini to answer general library FAQs."""
     system_instruction = (
         "You are Ashu, an AI assistant for Bennett University Library. "
         "Provide accurate and concise answers based on the following FAQ and library information. "
@@ -182,7 +261,9 @@ def create_payload(prompt):
         ]
     }
 
-def call_gemini_api_v2(payload):
+
+def call_gemini_api_v2(payload: dict) -> str:
+    """Call the Gemini API for general queries when no custom logic applies."""
     if not GEMINI_API_KEY:
         return "Gemini API Key is missing. Please set it in Streamlit secrets."
     url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
@@ -192,9 +273,9 @@ def call_gemini_api_v2(payload):
             json=payload,
             headers={
                 "Content-Type": "application/json",
-                "X-goog-api-key": GEMINI_API_KEY
+                "X-goog-api-key": GEMINI_API_KEY,
             },
-            timeout=15
+            timeout=15,
         )
         if response.status_code == 200:
             candidates = response.json().get("candidates", [{}])
@@ -202,10 +283,12 @@ def call_gemini_api_v2(payload):
             return answer
         else:
             return f"Connection error: {response.status_code} - {response.text}"
-    except Exception as e:
+    except Exception:
         return "A network error occurred. Please try again later."
 
-def get_topic_from_prompt(prompt):
+
+def get_topic_from_prompt(prompt: str) -> str:
+    """Extract a topic from a natural language prompt."""
     pattern = r"(?:on|par|about|ke bare mein|पर|के बारे में|का|की)\s+([a-zA-Z0-9\-अ-ह ]+)"
     match = re.search(pattern, prompt, re.IGNORECASE)
     if match:
@@ -215,7 +298,9 @@ def get_topic_from_prompt(prompt):
         return words[-2] if words[-1].lower() in ["articles", "पर", "on"] else words[-1]
     return prompt.strip()
 
-def handle_user_query(prompt):
+
+def handle_user_query(prompt: str) -> str:
+    """Process the user’s query and return an appropriate response."""
     # Book search
     if "find books on" in prompt.lower() or "find book on" in prompt.lower():
         topic = (
@@ -234,12 +319,24 @@ def handle_user_query(prompt):
                 answer += f"- [{book['title']}]({book['url']}){authors}{pub}{year}\n"
         else:
             answer += "No relevant books found from Google Books.\n"
-        answer += f"\n**For more, search [BU OPAC](https://libraryopac.bennett.edu.in/) or [Refread](https://bennett.refread.com/#/home).**"
+        answer += "\n**For more, search [BU OPAC](https://libraryopac.bennett.edu.in/) or [Refread](https://bennett.refread.com/#/home).**"
         return answer
 
-    # Article/research paper/journal
+    # Article/research paper/journal search
     article_keywords = [
-        "article", "articles", "research paper", "journal", "preprint", "open access", "dataset", "साहित्य", "आर्टिकल", "पत्रिका", "जर्नल", "शोध", "पेपर"
+        "article",
+        "articles",
+        "research paper",
+        "journal",
+        "preprint",
+        "open access",
+        "dataset",
+        "साहित्य",
+        "आर्टिकल",
+        "पत्रिका",
+        "जर्नल",
+        "शोध",
+        "पेपर",
     ]
     if any(kw in prompt.lower() for kw in article_keywords):
         topic = get_topic_from_prompt(prompt)
@@ -307,45 +404,118 @@ def handle_user_query(prompt):
     payload = create_payload(prompt)
     return call_gemini_api_v2(payload)
 
-if "messages" not in st.session_state:
-    st.session_state.messages = []
 
-st.markdown("""
-<div class="profile-container">
-    <img src="https://library.bennett.edu.in/wp-content/uploads/2024/05/WhatsApp-Image-2024-05-01-at-12.41.02-PM-e1714549052999-150x150.jpeg" 
-         width="150" 
-         style="border-radius: 50%; border: 3px solid #2e86c1; margin-bottom: 1rem;">
-    <h1 style="color: #2e86c1; margin-bottom: 0.5rem; font-size: 2em;">Ashu AI Assistant at Bennett University Library</h1>
-</div>
-""", unsafe_allow_html=True)
+def transcribe_audio(audio_bytes: bytes) -> str:
+    """
+    Transcribe recorded audio into text using SpeechRecognition.
 
-show_quick_actions()
+    If SpeechRecognition is not installed or transcription fails, an
+    empty string is returned.
+    """
+    if sr is None:
+        return ""
+    recognizer = sr.Recognizer()
+    try:
+        with sr.AudioFile(io.BytesIO(audio_bytes)) as source:
+            audio_data = recognizer.record(source)
+            # use Google's free recognizer; no API key required for small requests
+            text = recognizer.recognize_google(audio_data)
+            return text
+    except Exception:
+        return ""
 
-st.markdown("""
-<div style="text-align: center; margin: 2rem 0;">
-    <p style="font-size: 1.1em;">Hello! I am Ashu, your AI assistant at Bennett University Library. How can I help you today?</p>
-</div>
-""", unsafe_allow_html=True)
 
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+def speak_text(text: str) -> None:
+    """Convert text to speech and play it back using streamlit‑TTS."""
+    if text_to_speech is not None:
+        # The library will automatically play the audio in the browser.
+        try:
+            text_to_speech(text=text, language="en", wait=False)
+        except Exception:
+            pass
 
-st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
-prompt = st.chat_input("Type your query about books, research papers, journals, library services...")
 
-if prompt:
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.spinner("Ashu is typing..."):
-        answer = handle_user_query(prompt)
-    st.session_state.messages.append({"role": "assistant", "content": answer})
-    st.rerun()
-st.markdown('</div>', unsafe_allow_html=True)
+def render_app() -> None:
+    """Render the entire Streamlit app layout and handle interaction."""
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
 
-st.markdown("""
-<div class="footer">
-    <div style="margin: 0.5rem 0;">
-        © 2025 - Ashutosh Mishra | All Rights Reserved
-    </div>
-</div>
-""", unsafe_allow_html=True)
+    # Display profile and welcome
+    st.markdown(
+        """
+        <div class="profile-container">
+            <img src="https://library.bennett.edu.in/wp-content/uploads/2024/05/WhatsApp-Image-2024-05-01-at-12.41.02-PM-e1714549052999-150x150.jpeg" 
+                 width="150" 
+                 style="border-radius: 50%; border: 3px solid #2e86c1; margin-bottom: 1rem;">
+            <h1 style="color: #2e86c1; margin-bottom: 0.5rem; font-size: 2em;">Ashu AI Assistant at Bennett University Library</h1>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    show_quick_actions()
+
+    st.markdown(
+        """
+        <div style="text-align: center; margin: 2rem 0;">
+            <p style="font-size: 1.1em;">Hello! I am Ashu, your AI assistant at Bennett University Library. How can I help you today?</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Display previous chat messages
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"], unsafe_allow_html=True)
+
+    # Voice recorder section.  Only render if the component is available.
+    if audio_recorder is not None:
+        st.markdown("**Speak your query (optional):**")
+        audio_bytes = audio_recorder(
+            text="",
+            recording_color="#e8b62c",
+            neutral_color="#2e86c1",
+            icon_name="microphone",
+            icon_size="2x",
+        )
+        if audio_bytes:
+            # Process the audio only when it is newly recorded
+            transcript = transcribe_audio(audio_bytes)
+            if transcript:
+                st.session_state.messages.append({"role": "user", "content": transcript})
+                with st.spinner("Ashu is typing..."):
+                    answer = handle_user_query(transcript)
+                st.session_state.messages.append({"role": "assistant", "content": answer})
+                # Speak the answer
+                speak_text(answer)
+                st.rerun()
+
+    # Text chat input
+    st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
+    prompt = st.chat_input("Type your query about books, research papers, journals, library services...")
+    if prompt:
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.spinner("Ashu is typing..."):
+            answer = handle_user_query(prompt)
+        st.session_state.messages.append({"role": "assistant", "content": answer})
+        # Speak the answer for typed queries as well
+        speak_text(answer)
+        st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # Footer
+    st.markdown(
+        """
+        <div class="footer">
+            <div style="margin: 0.5rem 0;">
+                © 2025 - Ashutosh Mishra | All Rights Reserved
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+if __name__ == "__main__":
+    render_app()
