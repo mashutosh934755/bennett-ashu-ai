@@ -1,23 +1,29 @@
+# app.py  — Ashu AI (Streamlit, iframe-friendly, light-only UI)
+
 import streamlit as st
 import requests
 import re
 import feedparser  # pip install feedparser
 
-# ==== KEYS FROM SECRETS ====
+# ==== KEYS (use Streamlit secrets) ====
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
 CORE_API_KEY = st.secrets.get("CORE_API_KEY", "")
 GOOGLE_BOOKS_API_KEY = st.secrets.get("GOOGLE_BOOKS_API_KEY", "")
 
-# ==== CSS (compact + brand + hide streamlit chrome) ====
+# ==== HARD CSS: light theme, hide footer/toolbar, compact layout ====
 st.markdown("""
 <style>
   :root{ --brand-a:#960820; --brand-b:#0D335E; }
 
-  /* Compact app like a mobile card (fits iframe modal) */
-  .main .block-container{
-      max-width:460px;
-      padding:1rem .75rem;
+  /* Force LIGHT everywhere */
+  html, body, .stApp{
+    background:#ffffff !important;
+    color:#0D335E !important;
+    color-scheme: light !important;
   }
+
+  /* Compact card width (so iframe me kabhi cut na ho) */
+  .main .block-container{ max-width:460px; padding:1rem .75rem; }
 
   /* Header */
   .profile-container{ text-align:center; margin:.25rem 0 .5rem 0; }
@@ -31,7 +37,7 @@ st.markdown("""
       line-height:1.25; margin:0 .25rem;
   }
 
-  /* Quick actions – wrap and smaller pills so they never cut */
+  /* Quick actions – wrap & smaller to avoid cut */
   .quick-actions-row{
       display:flex; flex-wrap:wrap; justify-content:center;
       gap:8px; margin:.5rem 0 1rem 0; width:100%;
@@ -43,31 +49,37 @@ st.markdown("""
       transition:all .2s; font-size:13px; text-decoration:none; text-align:center;
       cursor:pointer; white-space:nowrap; flex:1 1 46%; max-width:46%;
   }
-  @media (max-width:400px){ .quick-action-btn{ flex:1 1 100%; max-width:100%; } }
   .quick-action-btn:hover{ transform:translateY(-1px); box-shadow:0 4px 8px rgba(0,0,0,.12); }
+  @media (max-width:400px){ .quick-action-btn{ flex:1 1 100%; max-width:100%; } }
 
-  /* Chat input – not fixed (iframe footer issues avoided) */
+  /* Chat input – not fixed (avoid iframe footer overlap) */
   .static-chat-input{ position:unset !important; }
   .stChatInput input{ border-radius:24px !important; padding:10px 16px !important; }
   .stChatInput button{ border-radius:50% !important; background:var(--brand-b) !important; }
 
-  /* Section text */
-  .chat-container{ margin:1rem 0; }
-  p, li{ color:#2b2b2b; }
+  /* Colors for system accents */
+  a, .stMarkdown a{ color:var(--brand-a) !important; }
+  .stButton>button{ background:var(--brand-a) !important; }
 
-  /* ===== Hide Streamlit chrome (footer, toolbar, fullscreen) ===== */
+  /* ===== Hide ALL Streamlit chrome ===== */
   #MainMenu, header, footer {visibility:hidden !important;}
   [data-testid="stToolbar"], [data-testid="stDecoration"]{ display:none !important; }
   .viewerBadge_container__1QSob, .viewerBadge_link__1S137,
   .stApp a[href*="fullscreen"], .stApp button[title="View fullscreen"],
   .stDeployButton, .stAppDeployButton { display:none !important; }
 
-  /* No horizontal scrollbar inside iframe */
+  /* Extra safety: bottom cover in case Streamlit injects something */
+  .stApp::after{
+    content:"";
+    position:fixed; left:0; right:0; bottom:0;
+    height:84px; background:#ffffff; pointer-events:none; z-index:999;
+  }
+
   html, body, .stApp{ overflow-x:hidden; }
 </style>
 """, unsafe_allow_html=True)
 
-# ==== QUICK ACTIONS ====
+# ==== QUICK ACTION BUTTONS ====
 def create_quick_action_button(text, url):
     return f'<a href="{url}" target="_blank" class="quick-action-btn">{text}</a>'
 
@@ -76,7 +88,7 @@ def show_quick_actions():
         ("Find e-Resources", "https://bennett.refread.com/#/home"),
         ("Find Books", "https://libraryopac.bennett.edu.in/"),
         ("Working Hours", "https://library.bennett.edu.in/index.php/working-hours/"),
-        ("Book GD Rooms", "http://10.6.0.121/gdroombooking/")
+        ("Book GD Rooms", "http://10.6.0.121/gdroombooking/"),
     ]
     st.markdown(
         '<div class="quick-actions-row">' +
@@ -92,22 +104,16 @@ def google_books_search(query, limit=5):
     url = f"https://www.googleapis.com/books/v1/volumes?q={query}&maxResults={limit}&key={GOOGLE_BOOKS_API_KEY}"
     try:
         resp = requests.get(url, timeout=10)
-        items = resp.json().get("items", [])
+        items = resp.json().get("items", []) or []
         result = []
         for item in items:
-            volume = item.get("volumeInfo", {})
+            volume = item.get("volumeInfo", {}) or {}
             title = volume.get("title", "No Title")
-            authors = ", ".join(volume.get("authors", []))
+            authors = ", ".join(volume.get("authors", []) or [])
             link = volume.get("infoLink", "#")
             publisher = volume.get("publisher", "")
-            year = volume.get("publishedDate", "")[:4]
-            result.append({
-                "title": title,
-                "authors": authors,
-                "url": link,
-                "publisher": publisher,
-                "year": year
-            })
+            year = (volume.get("publishedDate", "") or "")[:4]
+            result.append({"title": title, "authors": authors, "url": link, "publisher": publisher, "year": year})
         return result
     except Exception:
         return []
@@ -121,9 +127,8 @@ def core_article_search(query, limit=5):
     try:
         r = requests.get(url, headers=headers, params=params, timeout=15)
         if r.status_code == 200:
-            return r.json().get("results", [])
-        else:
-            return []
+            return r.json().get("results", []) or []
+        return []
     except Exception:
         return []
 
@@ -132,7 +137,7 @@ def arxiv_article_search(query, limit=5):
     try:
         feed = feedparser.parse(url)
         result = []
-        for entry in feed.entries:
+        for entry in getattr(feed, "entries", []):
             title = entry.title
             pdf_links = [l.href for l in entry.links if l.type == "application/pdf"]
             link = pdf_links[0] if pdf_links else entry.link
@@ -148,18 +153,17 @@ def doaj_article_search(query, limit=5):
         resp = requests.get(url, timeout=10)
         if resp.status_code == 200:
             data = resp.json()
-            articles = data.get("results", [])[:limit]
+            articles = (data.get("results", []) or [])[:limit]
             result = []
             for art in articles:
-                bibjson = art.get("bibjson", {})
+                bibjson = art.get("bibjson", {}) or {}
                 title = bibjson.get("title", "No Title")
-                link = bibjson.get("link", [{}])[0].get("url", "#")
-                journal = bibjson.get("journal", {}).get("title", "")
+                link = (bibjson.get("link", [{}]) or [{}])[0].get("url", "#")
+                journal = (bibjson.get("journal", {}) or {}).get("title", "")
                 year = bibjson.get("year", "")
                 result.append({"title": title, "url": link, "journal": journal, "year": year})
             return result
-        else:
-            return []
+        return []
     except Exception:
         return []
 
@@ -168,23 +172,22 @@ def datacite_article_search(query, limit=5):
     try:
         resp = requests.get(url, timeout=10)
         if resp.status_code == 200:
-            items = resp.json().get("data", [])
+            items = resp.json().get("data", []) or []
             result = []
             for item in items:
-                attrs = item.get("attributes", {})
-                titles = attrs.get("titles", [{}])
-                title = titles[0].get("title", "No Title") if titles else "No Title"
+                attrs = item.get("attributes", {}) or {}
+                titles = attrs.get("titles", [{}]) or [{}]
+                title = titles[0].get("title", "No Title")
                 url2 = attrs.get("url", "#")
                 publisher = attrs.get("publisher", "")
                 year = attrs.get("publicationYear", "")
                 result.append({"title": title, "url": url2, "journal": publisher, "year": year})
             return result
-        else:
-            return []
+        return []
     except Exception:
         return []
 
-# ==== LLM PAYLOAD ====
+# ==== LLM Payload (Gemini) ====
 def create_payload(prompt: str):
     system_instruction = (
         "You are Ashu, an AI assistant for Bennett University Library. "
@@ -218,25 +221,25 @@ def create_payload(prompt: str):
     )
     return {"contents": [{"parts": [{"text": system_instruction}]}]}
 
-def call_gemini_api_v2(payload):
+def call_gemini_api_v2(payload: dict) -> str:
     if not GEMINI_API_KEY:
         return "Gemini API Key is missing. Please set it in Streamlit secrets."
     url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
     try:
         response = requests.post(
-            url, json=payload,
+            url,
+            json=payload,
             headers={"Content-Type": "application/json", "X-goog-api-key": GEMINI_API_KEY},
-            timeout=15
+            timeout=15,
         )
         if response.status_code == 200:
             candidates = response.json().get("candidates", [{}])
             return candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "No answer found.")
-        else:
-            return f"Connection error: {response.status_code} - {response.text}"
+        return f"Connection error: {response.status_code} - {response.text}"
     except Exception:
         return "A network error occurred. Please try again later."
 
-# ==== UTIL ====
+# ==== Prompt helpers ====
 def get_topic_from_prompt(prompt: str) -> str:
     pattern = r"(?:on|par|about|ke bare mein|पर|के बारे में|का|की)\s+([a-zA-Z0-9\-अ-ह ]+)"
     match = re.search(pattern, prompt, re.IGNORECASE)
@@ -247,11 +250,15 @@ def get_topic_from_prompt(prompt: str) -> str:
         return words[-2] if words[-1].lower() in ["articles", "पर", "on"] else words[-1]
     return prompt.strip()
 
-# ==== ROUTER ====
 def handle_user_query(prompt: str) -> str:
-    # Book search
+    # Books
     if "find books on" in prompt.lower() or "find book on" in prompt.lower():
-        topic = prompt.lower().replace("find books on","").replace("find book on","").strip()
+        topic = (
+            prompt.lower()
+            .replace("find books on", "")
+            .replace("find book on", "")
+            .strip()
+        )
         books = google_books_search(topic, limit=5)
         answer = f"### 📚 Books on **{topic.title()}** (Google Books)\n"
         if books:
@@ -265,8 +272,11 @@ def handle_user_query(prompt: str) -> str:
         answer += "\n**For more, search [BU OPAC](https://libraryopac.bennett.edu.in/) or [Refread](https://bennett.refread.com/#/home).**"
         return answer
 
-    # Article / research paper / journal
-    article_keywords = ["article","articles","research paper","journal","preprint","open access","dataset","साहित्य","आर्टिकल","पत्रिका","जर्नल","शोध","पेपर"]
+    # Articles / journals / datasets
+    article_keywords = [
+        "article","articles","research paper","journal","preprint","open access","dataset",
+        "साहित्य","आर्टिकल","पत्रिका","जर्नल","शोध","पेपर",
+    ]
     if any(kw in prompt.lower() for kw in article_keywords):
         topic = get_topic_from_prompt(prompt)
         if not topic or len(topic) < 2:
@@ -292,8 +302,8 @@ def handle_user_query(prompt: str) -> str:
         if core_results:
             for art in core_results:
                 title = art.get("title", "No Title")
-                url = art.get("downloadUrl", art.get("urls", [{}])[0].get("url", "#"))
-                year = art.get("createdDate", "")[:4]
+                url = art.get("downloadUrl", (art.get("urls", [{}]) or [{}])[0].get("url", "#"))
+                year = (art.get("createdDate", "") or "")[:4]
                 answer += f"- [{title}]({url}) {'('+year+')' if year else ''}\n"
         else:
             answer += "No recent articles found on this topic from CORE.\n"
@@ -324,17 +334,17 @@ def handle_user_query(prompt: str) -> str:
 
         return answer
 
-    # General (FAQ) via Gemini
+    # General (FAQ etc) - Gemini
     payload = create_payload(prompt)
     return call_gemini_api_v2(payload)
 
-# ==== APP BODY ====
+# ==== UI ====
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
 st.markdown("""
 <div class="profile-container">
-  <img src="https://library.bennett.edu.in/wp-content/uploads/2024/05/WhatsApp-Image-2024-05-01-at-12.41.02-PM-e1714549052999-150x150.jpeg" width="150" style="border-radius:50%; border:3px solid var(--brand-b); margin-bottom:.5rem;">
+  <img src="https://library.bennett.edu.in/wp-content/uploads/2024/05/WhatsApp-Image-2024-05-01-at-12.41.02-PM-e1714549052999-150x150.jpeg" />
   <h1>Ashu AI Assistant at Bennett University Library</h1>
 </div>
 """, unsafe_allow_html=True)
@@ -342,25 +352,25 @@ st.markdown("""
 show_quick_actions()
 
 st.markdown("""
-<div style="text-align:center; margin:1rem 0;">
-  <p style="font-size:1rem;">Hello! I am Ashu, your AI assistant at Bennett University Library. How can I help you today?</p>
+<div style="text-align: center; margin: 1rem 0 .5rem 0;">
+  <p style="font-size: 1rem; color:#0D335E;">
+    Hello! I am Ashu, your AI assistant at Bennett University Library. How can I help you today?
+  </p>
 </div>
 """, unsafe_allow_html=True)
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
-        st.markdown(message["content"], unsafe_allow_html=True)
+        st.markdown(message["content"])
 
-# Not fixed; simply render input
 st.markdown('<div class="static-chat-input">', unsafe_allow_html=True)
 prompt = st.chat_input("Type your query about books, research papers, journals, library services...")
+
 if prompt:
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.spinner("Ashu is typing..."):
         answer = handle_user_query(prompt)
     st.session_state.messages.append({"role": "assistant", "content": answer})
     st.rerun()
-st.markdown('</div>', unsafe_allow_html=True)
 
-# Optional site footer (inside iframe). Keep minimal or comment out to remove.
-# st.markdown("""<div style="text-align:center;color:#666;margin-top:.5rem;font-size:.85rem;">© 2025 - Ashutosh Mishra</div>""", unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
